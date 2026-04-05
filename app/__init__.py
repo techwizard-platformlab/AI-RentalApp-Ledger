@@ -1,1 +1,0 @@
-# rentalAppLedger — API Gateway
