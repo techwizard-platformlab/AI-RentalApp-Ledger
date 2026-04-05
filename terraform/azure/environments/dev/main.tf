@@ -122,6 +122,7 @@ module "acr" {
   resource_group_name            = var.resource_group_name
   sku                            = local.cfg.acr_sku
   aks_kubelet_identity_object_id = module.aks.kubelet_identity_object_id
+  enable_aks_pull_role           = false # set true after first apply when AKS exists
   tags                           = local.tags
 }
 
@@ -144,6 +145,7 @@ module "keyvault" {
   sku                 = "standard"
   soft_delete_days    = 7
   aks_principal_id    = module.aks.principal_id
+  enable_aks_kv_role  = false # set true after first apply when AKS exists
   tags                = local.tags
 }
 

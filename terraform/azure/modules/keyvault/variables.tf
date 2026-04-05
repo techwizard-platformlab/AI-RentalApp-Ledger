@@ -29,6 +29,12 @@ variable "aks_principal_id" {
   default = ""
 }
 
+variable "enable_aks_kv_role" {
+  description = "Set to true only after AKS is created. Must be a static bool (not computed) to avoid plan-time errors."
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

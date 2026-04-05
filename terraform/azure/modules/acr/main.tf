@@ -11,7 +11,7 @@ resource "azurerm_container_registry" "this" {
 
 # Grant AKS kubelet identity pull access to ACR (AcrPull role)
 resource "azurerm_role_assignment" "aks_acr_pull" {
-  count = var.aks_kubelet_identity_object_id != "" ? 1 : 0
+  count = var.enable_aks_pull_role ? 1 : 0
 
   scope                = azurerm_container_registry.this.id
   role_definition_name = "AcrPull"

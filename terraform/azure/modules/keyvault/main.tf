@@ -22,7 +22,7 @@ resource "azurerm_role_assignment" "terraform_kv_admin" {
 
 # Grant AKS managed identity Key Vault Secrets User (read-only)
 resource "azurerm_role_assignment" "aks_kv_secrets_user" {
-  count = var.aks_principal_id != "" ? 1 : 0
+  count = var.enable_aks_kv_role ? 1 : 0
 
   scope                = azurerm_key_vault.this.id
   role_definition_name = "Key Vault Secrets User"
