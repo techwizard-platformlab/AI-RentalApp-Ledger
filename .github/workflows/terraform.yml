@@ -20,6 +20,15 @@ on:
       - ".github/workflows/terraform.yml"
 
   push:
+    branches:
+      - "feature/**"
+      - "fix/**"
+      - "hotfix/**"
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform.yml"
+
+  push:
     branches: [main]
     paths:
       - "terraform/**"
@@ -94,8 +103,14 @@ jobs:
           fi
 
           if [ "$TRIGGER" = "push" ]; then
+            BRANCH="${{ github.ref_name }}"
+            # Feature/fix branches → plan only; main → apply
+            if [ "$BRANCH" = "main" ]; then
+              echo "action=apply" >> $GITHUB_OUTPUT
+            else
+              echo "action=plan"  >> $GITHUB_OUTPUT
+            fi
             echo "env=dev"        >> $GITHUB_OUTPUT
-            echo "action=apply"  >> $GITHUB_OUTPUT
             echo "run_azure=true" >> $GITHUB_OUTPUT
             echo "run_gcp=false"  >> $GITHUB_OUTPUT
             exit 0

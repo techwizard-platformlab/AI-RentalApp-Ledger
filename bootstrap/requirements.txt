@@ -1,0 +1,7 @@
+# bootstrap/requirements.txt
+# Dependencies for bootstrap scripts
+# Install: pip install -r bootstrap/requirements.txt
+
+# GitHub API secret encryption (set-github-secrets.py)
+PyNaCl>=1.5.0
+requests>=2.31.0
