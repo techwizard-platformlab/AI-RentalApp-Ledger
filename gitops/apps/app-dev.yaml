@@ -7,12 +7,13 @@ metadata:
     project: rentalAppLedger
     environment: dev
   annotations:
-    # ArgoCD Image Updater: watch ACR and GCR for new image tags
-    argocd-image-updater.argoproj.io/image-list: |
-      api-gateway={ACR_NAME}.azurecr.io/api-gateway,
-      rental-service={ACR_NAME}.azurecr.io/rental-service,
-      ledger-service={ACR_NAME}.azurecr.io/ledger-service,
-      notification-service={ACR_NAME}.azurecr.io/notification-service
+    # ArgoCD Image Updater: watch ACR for new image tags
+    # ACR_LOGIN_SERVER is injected by argocd-bootstrap workflow (e.g. deveusacrabcd12.azurecr.io)
+    argocd-image-updater.argoproj.io/image-list: >-
+      api-gateway=ACR_LOGIN_SERVER/rental-app-ledger,
+      rental-service=ACR_LOGIN_SERVER/rental-app-ledger,
+      ledger-service=ACR_LOGIN_SERVER/rental-app-ledger,
+      notification-service=ACR_LOGIN_SERVER/rental-app-ledger
     argocd-image-updater.argoproj.io/api-gateway.update-strategy: newest-build
     argocd-image-updater.argoproj.io/rental-service.update-strategy: newest-build
     argocd-image-updater.argoproj.io/ledger-service.update-strategy: newest-build
@@ -26,7 +27,7 @@ spec:
   project: rental-ledger
 
   source:
-    repoURL: "https://github.com/{org}/rentalAppLedger"
+    repoURL: "https://github.com/Ramprasath26/AI-RentalApp-Ledger"
     targetRevision: main
     path: k8s/overlays/dev
 

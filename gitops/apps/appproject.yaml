@@ -10,7 +10,7 @@ spec:
 
   # Only allow syncing from the rentalAppLedger app repo
   sourceRepos:
-    - "https://github.com/{org}/rentalAppLedger"
+    - "https://github.com/Ramprasath26/AI-RentalApp-Ledger"
 
   # Only deploy to rental-dev and rental-qa namespaces
   destinations:
@@ -18,7 +18,7 @@ spec:
       server: https://kubernetes.default.svc   # in-cluster (AKS)
     - namespace: rental-qa
       server: https://kubernetes.default.svc
-    # GKE spoke cluster — register via argocd cluster add
+    # GKE spoke cluster — register via argocd cluster add after GKE is provisioned
     - namespace: rental-dev
       server: https://GKE_CLUSTER_ENDPOINT     # replace after cluster registration
     - namespace: rental-qa
