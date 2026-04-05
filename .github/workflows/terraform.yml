@@ -21,15 +21,10 @@ on:
 
   push:
     branches:
+      - main
       - "feature/**"
       - "fix/**"
       - "hotfix/**"
-    paths:
-      - "terraform/**"
-      - ".github/workflows/terraform.yml"
-
-  push:
-    branches: [main]
     paths:
       - "terraform/**"
       - ".github/workflows/terraform.yml"
