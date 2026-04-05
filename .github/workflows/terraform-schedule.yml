@@ -4,9 +4,10 @@ name: "Terraform Schedule"
 #   Destroy: Sunday 18:00 UTC (23:30 IST) — before session expires
 #   Recreate: Saturday 02:00 UTC (07:30 IST) — ready for weekend session
 on:
-  schedule:
-    - cron: "0 18 * * 0"   # Sunday  18:00 UTC → destroy
-    - cron: "0 2  * * 6"   # Saturday 02:00 UTC → recreate
+  # Schedule triggers disabled during testing — enable after workflow is stable
+  # schedule:
+  #   - cron: "0 18 * * 0"   # Sunday  18:00 UTC → destroy
+  #   - cron: "0 2  * * 6"   # Saturday 02:00 UTC → recreate
   workflow_dispatch:
     inputs:
       action:

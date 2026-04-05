@@ -10,6 +10,10 @@ terraform {
       source  = "hashicorp/azuread"
       version = "~> 2.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -20,8 +24,10 @@ provider "azurerm" {
       recover_soft_deleted_key_vaults = true
     }
   }
-  # Credentials injected via OIDC in GitHub Actions:
-  # ARM_CLIENT_ID, ARM_TENANT_ID, ARM_SUBSCRIPTION_ID, ARM_USE_OIDC=true
+  # Auth via ARM_* env vars — subscription_id required in v4
+  subscription_id = var.subscription_id
+  # KodeKloud: SP does not have permission to register resource providers
+  resource_provider_registrations = "none"
 }
 
 provider "azuread" {}

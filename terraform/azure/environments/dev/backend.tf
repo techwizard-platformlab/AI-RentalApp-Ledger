@@ -1,9 +1,10 @@
 terraform {
   backend "azurerm" {
-    resource_group_name  = "<TF_BACKEND_RG>"
-    storage_account_name = "<TF_BACKEND_SA>"
-    container_name       = "tfstate"
-    key                  = "dev.terraform.tfstate"
-    use_oidc             = true
+    # Values injected at runtime via terraform init -backend-config in CI:
+    # -backend-config="resource_group_name=..."
+    # -backend-config="storage_account_name=..."
+    # -backend-config="container_name=..."
+    key      = "dev.terraform.tfstate"
+    use_oidc = false
   }
 }

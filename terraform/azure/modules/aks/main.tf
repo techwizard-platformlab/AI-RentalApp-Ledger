@@ -1,40 +1,40 @@
-# AKS — Standard SKU (KodeKloud requires Standard; Free SKU lacks SLA)
-# Cost note: Standard_B2s is the cheapest VM that comfortably runs 4 pods.
-# Single node pool in dev to minimise cost; scale out for qa/prod via variables.
+# AKS — KodeKloud allowed VM sizes: Standard_D2s_v3, Standard_K8S2_v1, Standard_K8S_v1
+# Max agent pool: 2. Max node pool: 1. Container insights must be disabled.
 resource "azurerm_kubernetes_cluster" "this" {
   name                = "${var.environment}-${var.location_short}-aks"
   location            = var.location
   resource_group_name = var.resource_group_name
   dns_prefix          = "${var.environment}-${var.location_short}-aks"
   kubernetes_version  = var.kubernetes_version
-  sku_tier            = "Standard" # KodeKloud requirement
+  sku_tier            = "Standard"
 
-  # System node pool
   default_node_pool {
-    name                = "system"
-    node_count          = var.node_count
-    vm_size             = var.vm_size          # Standard_B2s — lowest KodeKloud-allowed AKS size
-    os_disk_size_gb     = var.os_disk_size_gb  # max 128 GB, keep 30 GB for cost
-    vnet_subnet_id      = var.subnet_id
-    type                = "VirtualMachineScaleSets"
-    enable_auto_scaling = false # disable autoscale to avoid surprise VM costs in dev
+    name                 = "system"
+    node_count           = var.node_count
+    vm_size              = var.vm_size
+    os_disk_size_gb      = var.os_disk_size_gb
+    vnet_subnet_id       = var.subnet_id
+    type                 = "VirtualMachineScaleSets"
+    auto_scaling_enabled = false
   }
 
-  # Managed identity (no service principal credentials to rotate)
   identity {
     type = "SystemAssigned"
   }
 
-  # Networking — use Azure CNI for proper VNet integration
   network_profile {
-    network_plugin    = "azure"
-    load_balancer_sku = "standard"
-    outbound_type     = "loadBalancer"
+    network_plugin     = "azure"
+    load_balancer_sku  = "standard"
+    outbound_type      = "loadBalancer"
+    # Must not overlap with VNet (10.0.0.0/16) or subnets (10.0.1-3.0/24)
+    service_cidr       = "10.1.0.0/16"
+    dns_service_ip     = "10.1.0.10"
   }
 
-  # Disable expensive add-ons not needed for learning
+  # KodeKloud policy: disable all add-ons including container insights
   azure_policy_enabled             = false
   http_application_routing_enabled = false
+  # oms_agent block intentionally omitted — disables container insights per KodeKloud policy
 
   tags = var.tags
 }

@@ -24,11 +24,6 @@ variable "soft_delete_days" {
   default = 7
 }
 
-variable "aks_principal_id" {
-  type    = string
-  default = ""
-}
-
 variable "tags" {
   type    = map(string)
   default = {}

@@ -20,7 +20,7 @@ locals {
       vnet_cidr     = "10.0.0.0/16"
       subnet_cidrs  = { aks = "10.0.1.0/24", ingress = "10.0.2.0/24", data = "10.0.3.0/24" }
       aks_nodes     = 1
-      aks_vm_size   = "Standard_B2s"
+      aks_vm_size   = "Standard_D2s_v3"  # KodeKloud allowed sizes only
       waf_mode      = "Detection"   # no traffic blocked in dev
       acr_sku       = "Basic"
     }
@@ -89,15 +89,8 @@ module "security_group" {
   tags                = local.tags
 }
 
-module "waf_policy" {
-  source              = "../../modules/waf_policy"
-  environment         = local.env
-  location            = var.location
-  location_short      = local.location_short
-  resource_group_name = var.resource_group_name
-  waf_mode            = local.cfg.waf_mode
-  tags                = local.tags
-}
+# WAF policy intentionally disabled — KodeKloud playground blocks WAF policy creation
+# (policy: "Non-compliant with policy standards for Azure_playground")
 
 # --- Compute ------------------------------------------------------------------
 module "aks" {
@@ -106,7 +99,7 @@ module "aks" {
   location            = var.location
   location_short      = local.location_short
   resource_group_name = var.resource_group_name
-  kubernetes_version  = "1.29"
+  kubernetes_version  = null # use latest supported version in the region
   node_count          = local.cfg.aks_nodes
   vm_size             = local.cfg.aks_vm_size
   os_disk_size_gb     = 30
@@ -115,14 +108,14 @@ module "aks" {
 }
 
 module "acr" {
-  source                         = "../../modules/acr"
-  environment                    = local.env
-  location                       = var.location
-  location_short                 = local.location_short
-  resource_group_name            = var.resource_group_name
-  sku                            = local.cfg.acr_sku
-  aks_kubelet_identity_object_id = module.aks.kubelet_identity_object_id
-  tags                           = local.tags
+  source              = "../../modules/acr"
+  environment         = local.env
+  location            = var.location
+  location_short      = local.location_short
+  resource_group_name = var.resource_group_name
+  sku                 = local.cfg.acr_sku
+  tags                = local.tags
+  # NOTE: AcrPull role assignment removed — KodeKloud blocks role assignments (403)
 }
 
 module "load_balancer" {
@@ -143,8 +136,8 @@ module "keyvault" {
   resource_group_name = var.resource_group_name
   sku                 = "standard"
   soft_delete_days    = 7
-  aks_principal_id    = module.aks.principal_id
   tags                = local.tags
+  # NOTE: Key Vault role assignments removed — KodeKloud blocks role assignments (403)
 }
 
 module "storage_account" {

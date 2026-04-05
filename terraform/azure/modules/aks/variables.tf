@@ -15,8 +15,9 @@ variable "resource_group_name" {
 }
 
 variable "kubernetes_version" {
-  type    = string
-  default = "1.29"
+  description = "AKS Kubernetes version. Set to null to use latest supported version automatically."
+  type        = string
+  default     = null
 }
 
 variable "node_count" {

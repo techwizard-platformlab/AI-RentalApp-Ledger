@@ -12,18 +12,23 @@ name: "Terraform"
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "terraform/**"
-      - "policy/**"
-      - ".github/workflows/terraform.yml"
+  # Auto triggers disabled during testing — enable after workflow is stable
+  # pull_request:
+  #   branches: [main]
+  #   paths:
+  #     - "terraform/**"
+  #     - "policy/**"
+  #     - ".github/workflows/terraform.yml"
 
-  push:
-    branches: [main]
-    paths:
-      - "terraform/**"
-      - ".github/workflows/terraform.yml"
+  # push:
+  #   branches:
+  #     - main
+  #     - "feature/**"
+  #     - "fix/**"
+  #     - "hotfix/**"
+  #   paths:
+  #     - "terraform/**"
+  #     - ".github/workflows/terraform.yml"
 
   workflow_dispatch:
     inputs:
@@ -60,7 +65,6 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
   pull-requests: write
 
 env:
@@ -94,8 +98,14 @@ jobs:
           fi
 
           if [ "$TRIGGER" = "push" ]; then
+            BRANCH="${{ github.ref_name }}"
+            # Feature/fix branches → plan only; main → apply
+            if [ "$BRANCH" = "main" ]; then
+              echo "action=apply" >> $GITHUB_OUTPUT
+            else
+              echo "action=plan"  >> $GITHUB_OUTPUT
+            fi
             echo "env=dev"        >> $GITHUB_OUTPUT
-            echo "action=apply"  >> $GITHUB_OUTPUT
             echo "run_azure=true" >> $GITHUB_OUTPUT
             echo "run_gcp=false"  >> $GITHUB_OUTPUT
             exit 0
@@ -150,6 +160,7 @@ jobs:
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_resource_group_name: ${{ secrets.TF_BACKEND_RG }}
+      TF_VAR_subscription_id:    ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
     steps:
       - uses: actions/checkout@v4
@@ -159,14 +170,6 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: true
-
-      - name: Azure login
-        uses: azure/login@v2
-        with:
-          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
-          client-secret:   ${{ secrets.AZURE_CLIENT_SECRET }}
-          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Terraform fmt check
         id: fmt

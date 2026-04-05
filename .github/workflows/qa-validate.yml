@@ -15,9 +15,9 @@ on:
         default: azure
         type: choice
         options: [azure, gcp, both]
-  # Also triggered from ArgoCD PostSync (via repository_dispatch)
-  repository_dispatch:
-    types: [argocd-sync-succeeded]
+  # Auto triggers disabled during testing — enable after workflow is stable
+  # repository_dispatch:
+  #   types: [argocd-sync-succeeded]
 
 permissions:
   contents: read

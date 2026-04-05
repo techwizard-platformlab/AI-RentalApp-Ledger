@@ -19,12 +19,6 @@ variable "sku" {
   default = "Basic"
 }
 
-variable "aks_kubelet_identity_object_id" {
-  description = "Set after AKS is created; controls AcrPull role assignment"
-  type        = string
-  default     = ""
-}
-
 variable "tags" {
   type    = map(string)
   default = {}

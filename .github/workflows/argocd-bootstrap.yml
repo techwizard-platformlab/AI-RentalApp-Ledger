@@ -1,0 +1,186 @@
+name: ArgoCD Bootstrap
+
+# Installs ArgoCD on AKS and applies AppProject + Application manifests.
+# Run this ONCE after terraform apply succeeds.
+# Re-run any time the KodeKloud environment is recreated.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "dev"
+        type: choice
+        options: [dev, qa]
+
+      action:
+        description: "Action"
+        required: true
+        default: "install"
+        type: choice
+        options:
+          - install        # Full install: ArgoCD + AppProject + Application
+          - upgrade        # Helm upgrade only (keep ArgoCD apps)
+          - apply-apps     # Apply AppProject + Application only (ArgoCD already running)
+          - uninstall      # Remove ArgoCD namespace entirely
+
+permissions:
+  contents: read
+
+concurrency:
+  group: argocd-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  ARGOCD_VERSION: "7.3.11"        # argo-cd Helm chart version (ArgoCD v2.11)
+  AKS_NAME: "${{ github.event.inputs.environment }}-eus-aks"
+  NAMESPACE_ARGOCD: argocd
+  NAMESPACE_APP: "rental-${{ github.event.inputs.environment }}"
+
+jobs:
+  bootstrap:
+    name: "ArgoCD ${{ github.event.inputs.action }} / ${{ github.event.inputs.environment }}"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Azure login (client secret) ─────────────────────────────────────────
+      - name: Azure login
+        run: |
+          az login \
+            --service-principal \
+            --username "${{ secrets.AZURE_CLIENT_ID }}" \
+            --password "${{ secrets.AZURE_CLIENT_SECRET }}" \
+            --tenant  "${{ secrets.AZURE_TENANT_ID }}"
+          az account set --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+
+      # ── Get AKS credentials ─────────────────────────────────────────────────
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group "${{ secrets.TF_BACKEND_RG }}" \
+            --name "${{ env.AKS_NAME }}" \
+            --overwrite-existing
+          kubectl get nodes
+
+      # ── Fetch ACR login server dynamically ─────────────────────────────────
+      - name: Get ACR login server
+        id: acr
+        run: |
+          ACR_SERVER=$(az acr list \
+            --resource-group "${{ secrets.TF_BACKEND_RG }}" \
+            --query "[0].loginServer" -o tsv)
+          echo "login_server=$ACR_SERVER" >> "$GITHUB_OUTPUT"
+          echo "ACR login server: $ACR_SERVER"
+
+      # ── Install / Upgrade ArgoCD via Helm ──────────────────────────────────
+      - name: Add Argo Helm repo
+        if: github.event.inputs.action == 'install' || github.event.inputs.action == 'upgrade'
+        run: |
+          helm repo add argo https://argoproj.github.io/argo-helm
+          helm repo update
+
+      - name: Install ArgoCD
+        if: github.event.inputs.action == 'install'
+        run: |
+          kubectl create namespace "${{ env.NAMESPACE_ARGOCD }}" --dry-run=client -o yaml | kubectl apply -f -
+
+          helm install argocd argo/argo-cd \
+            --namespace "${{ env.NAMESPACE_ARGOCD }}" \
+            --version "${{ env.ARGOCD_VERSION }}" \
+            --values gitops/argocd/install-values.yaml \
+            --set server.service.type=LoadBalancer \
+            --set server.ingress.enabled=false \
+            --timeout 10m \
+            --wait
+
+      - name: Upgrade ArgoCD
+        if: github.event.inputs.action == 'upgrade'
+        run: |
+          helm upgrade argocd argo/argo-cd \
+            --namespace "${{ env.NAMESPACE_ARGOCD }}" \
+            --version "${{ env.ARGOCD_VERSION }}" \
+            --values gitops/argocd/install-values.yaml \
+            --set server.service.type=LoadBalancer \
+            --set server.ingress.enabled=false \
+            --timeout 10m \
+            --wait
+
+      # ── Wait for ArgoCD server to get external IP ───────────────────────────
+      - name: Wait for ArgoCD LoadBalancer IP
+        if: github.event.inputs.action == 'install' || github.event.inputs.action == 'upgrade'
+        id: argocd_ip
+        run: |
+          echo "Waiting for ArgoCD server external IP..."
+          for i in $(seq 1 30); do
+            IP=$(kubectl get svc argocd-server -n "${{ env.NAMESPACE_ARGOCD }}" \
+              -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+            if [ -n "$IP" ]; then
+              echo "ip=$IP" >> "$GITHUB_OUTPUT"
+              echo "ArgoCD IP: $IP"
+              break
+            fi
+            echo "Attempt $i/30 — waiting 10s..."
+            sleep 10
+          done
+
+      # ── Apply AppProject ────────────────────────────────────────────────────
+      - name: Apply ArgoCD AppProject
+        if: github.event.inputs.action != 'uninstall'
+        run: |
+          kubectl apply -f gitops/apps/appproject.yaml
+
+      # ── Apply Application (with ACR login server substituted) ───────────────
+      - name: Apply ArgoCD Application
+        if: github.event.inputs.action != 'uninstall'
+        run: |
+          ACR_SERVER="${{ steps.acr.outputs.login_server }}"
+          sed "s|ACR_LOGIN_SERVER|${ACR_SERVER}|g" \
+            gitops/apps/app-${{ github.event.inputs.environment }}.yaml \
+            | kubectl apply -f -
+
+      # ── Create app namespace ────────────────────────────────────────────────
+      - name: Create app namespace
+        if: github.event.inputs.action != 'uninstall'
+        run: |
+          kubectl create namespace "${{ env.NAMESPACE_APP }}" --dry-run=client -o yaml | kubectl apply -f -
+
+      # ── Uninstall ───────────────────────────────────────────────────────────
+      - name: Uninstall ArgoCD
+        if: github.event.inputs.action == 'uninstall'
+        run: |
+          helm uninstall argocd --namespace "${{ env.NAMESPACE_ARGOCD }}" || true
+          kubectl delete namespace "${{ env.NAMESPACE_ARGOCD }}" --ignore-not-found
+
+      # ── Summary ─────────────────────────────────────────────────────────────
+      - name: Get ArgoCD initial admin password
+        if: github.event.inputs.action == 'install' || github.event.inputs.action == 'apply-apps'
+        id: argocd_pass
+        run: |
+          PASS=$(kubectl get secret argocd-initial-admin-secret \
+            -n "${{ env.NAMESPACE_ARGOCD }}" \
+            -o jsonpath="{.data.password}" 2>/dev/null | base64 -d || echo "already-changed")
+          echo "password=$PASS" >> "$GITHUB_OUTPUT"
+
+      - name: Job summary
+        if: always()
+        run: |
+          echo "## ArgoCD Bootstrap — ${{ github.event.inputs.environment }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Action | ${{ github.event.inputs.action }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Environment | ${{ github.event.inputs.environment }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| AKS Cluster | ${{ env.AKS_NAME }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| ACR | ${{ steps.acr.outputs.login_server }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| ArgoCD UI | http://${{ steps.argocd_ip.outputs.ip }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| ArgoCD Username | admin |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| ArgoCD Password | ${{ steps.argocd_pass.outputs.password }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Next steps" >> "$GITHUB_STEP_SUMMARY"
+          echo "1. Open http://${{ steps.argocd_ip.outputs.ip }} in your browser" >> "$GITHUB_STEP_SUMMARY"
+          echo "2. Login with admin / password above" >> "$GITHUB_STEP_SUMMARY"
+          echo "3. Run the CI Build workflow to push the first Docker image" >> "$GITHUB_STEP_SUMMARY"
+          echo "4. ArgoCD will auto-sync and deploy the app" >> "$GITHUB_STEP_SUMMARY"

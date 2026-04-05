@@ -2,12 +2,13 @@ package terraform.gcp
 
 import future.keywords.in
 import future.keywords.if
+import future.keywords.contains
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Data references
 # ─────────────────────────────────────────────────────────────────────────────
 allowed_regions := data.approved_skus.gcp.allowed_regions
-max_node_count  := data.approved_skus.gcp.max_node_count   # 3
+max_node_count  := data.approved_skus.gcp.max_node_count
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper: collect all resources from terraform plan JSON
@@ -20,38 +21,37 @@ resources := {r |
 # ─────────────────────────────────────────────────────────────────────────────
 # Rule 1: Deny GKE node pool with count > 3 (KodeKloud quota)
 # ─────────────────────────────────────────────────────────────────────────────
-deny[msg] if {
+deny contains msg if {
   r := resources[_]
   r.type == "google_container_node_pool"
-  count := r.change.after.node_count
-  count > max_node_count
+  node_count := r.change.after.node_count
+  node_count > max_node_count
   msg := sprintf(
     "GKE node pool '%s' requests %d nodes. KodeKloud quota max: %d",
-    [r.address, count, max_node_count]
+    [r.address, node_count, max_node_count]
   )
 }
 
-# Also check initial_node_count on the cluster itself
-deny[msg] if {
+deny contains msg if {
   r := resources[_]
   r.type == "google_container_cluster"
-  count := r.change.after.initial_node_count
-  count > max_node_count
+  node_count := r.change.after.initial_node_count
+  node_count > max_node_count
   msg := sprintf(
     "GKE cluster '%s' requests initial_node_count=%d. KodeKloud quota max: %d",
-    [r.address, count, max_node_count]
+    [r.address, node_count, max_node_count]
   )
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Rule 2: Deny GKE Autopilot (not available in KodeKloud playground)
 # ─────────────────────────────────────────────────────────────────────────────
-deny[msg] if {
+deny contains msg if {
   r := resources[_]
   r.type == "google_container_cluster"
   r.change.after.enable_autopilot == true
   msg := sprintf(
-    "GKE cluster '%s' has enable_autopilot=true. Autopilot is not available in the KodeKloud playground.",
+    "GKE cluster '%s' has enable_autopilot=true. Autopilot is not available in KodeKloud.",
     [r.address]
   )
 }
@@ -59,12 +59,12 @@ deny[msg] if {
 # ─────────────────────────────────────────────────────────────────────────────
 # Rule 3: Deny resources outside US regions
 # ─────────────────────────────────────────────────────────────────────────────
-deny[msg] if {
+deny contains msg if {
   r := resources[_]
   location := r.change.after.location
   not startswith(location, "us-")
   msg := sprintf(
-    "Resource '%s' (type: %s) is in region '%s'. Only US regions are allowed (us-*).",
+    "Resource '%s' (type: %s) is in region '%s'. Only US regions allowed (us-*).",
     [r.address, r.type, location]
   )
 }
@@ -72,7 +72,7 @@ deny[msg] if {
 # ─────────────────────────────────────────────────────────────────────────────
 # Rule 4: Deny storage bucket without versioning enabled
 # ─────────────────────────────────────────────────────────────────────────────
-deny[msg] if {
+deny contains msg if {
   r := resources[_]
   r.type == "google_storage_bucket"
   versioning := r.change.after.versioning
@@ -83,7 +83,7 @@ deny[msg] if {
   )
 }
 
-deny[msg] if {
+deny contains msg if {
   r := resources[_]
   r.type == "google_storage_bucket"
   versioning := r.change.after.versioning[0]
