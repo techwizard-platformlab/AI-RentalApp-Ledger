@@ -99,7 +99,7 @@ module "aks" {
   location            = var.location
   location_short      = local.location_short
   resource_group_name = var.resource_group_name
-  kubernetes_version  = "1.29"
+  kubernetes_version  = null # use latest supported version in the region
   node_count          = local.cfg.aks_nodes
   vm_size             = local.cfg.aks_vm_size
   os_disk_size_gb     = 30
