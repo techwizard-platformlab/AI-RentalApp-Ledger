@@ -12,22 +12,23 @@ name: "Terraform"
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "terraform/**"
-      - "policy/**"
-      - ".github/workflows/terraform.yml"
+  # Auto triggers disabled during testing — enable after workflow is stable
+  # pull_request:
+  #   branches: [main]
+  #   paths:
+  #     - "terraform/**"
+  #     - "policy/**"
+  #     - ".github/workflows/terraform.yml"
 
-  push:
-    branches:
-      - main
-      - "feature/**"
-      - "fix/**"
-      - "hotfix/**"
-    paths:
-      - "terraform/**"
-      - ".github/workflows/terraform.yml"
+  # push:
+  #   branches:
+  #     - main
+  #     - "feature/**"
+  #     - "fix/**"
+  #     - "hotfix/**"
+  #   paths:
+  #     - "terraform/**"
+  #     - ".github/workflows/terraform.yml"
 
   workflow_dispatch:
     inputs:
