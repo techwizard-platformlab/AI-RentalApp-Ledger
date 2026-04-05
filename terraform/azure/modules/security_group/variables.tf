@@ -15,9 +15,9 @@ variable "resource_group_name" {
 }
 
 variable "subnet_ids" {
+  description = "Map of name to subnet ID to associate with the security group"
   type        = map(string)
   default     = {}
-  description = "Map of name to subnet ID to associate with the security group"
 }
 
 variable "tags" {
