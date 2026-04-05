@@ -76,6 +76,9 @@ jobs:
           esac
           echo "label=$LABEL" >> "$GITHUB_OUTPUT"
 
+          # Upper-case status for display (| upper not supported in GHA expressions)
+          echo "status_upper=$(echo "${{ inputs.status }}" | tr '[:lower:]' '[:upper:]')" >> "$GITHUB_OUTPUT"
+
       - name: Send Discord embed
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
@@ -89,7 +92,7 @@ jobs:
           {
             "username": "rentalAppLedger Bot",
             "embeds": [{
-              "title": "${{ steps.meta.outputs.emoji }} ${{ steps.meta.outputs.label }} — ${{ inputs.status | upper }}",
+              "title": "${{ steps.meta.outputs.emoji }} ${{ steps.meta.outputs.label }} — ${{ steps.meta.outputs.status_upper }}",
               "description": "${{ inputs.message }}",
               "color": ${{ steps.meta.outputs.color }},
               "fields": [
