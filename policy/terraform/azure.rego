@@ -2,6 +2,7 @@ package terraform.azure
 
 import future.keywords.in
 import future.keywords.if
+import future.keywords.contains
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Data references
@@ -20,7 +21,7 @@ resources := {r |
 # ─────────────────────────────────────────────────────────────────────────────
 # Rule 1: Deny AKS with unapproved VM size
 # ─────────────────────────────────────────────────────────────────────────────
-deny[msg] if {
+deny contains msg if {
   r := resources[_]
   r.type == "azurerm_kubernetes_cluster"
   vm_size := r.change.after.default_node_pool[0].vm_size
@@ -34,7 +35,7 @@ deny[msg] if {
 # ─────────────────────────────────────────────────────────────────────────────
 # Rule 2: Deny resources deployed outside allowed regions
 # ─────────────────────────────────────────────────────────────────────────────
-deny[msg] if {
+deny contains msg if {
   r := resources[_]
   location := r.change.after.location
   not location in allowed_regions
@@ -47,7 +48,7 @@ deny[msg] if {
 # ─────────────────────────────────────────────────────────────────────────────
 # Rule 3: Deny storage accounts without HTTPS-only enabled
 # ─────────────────────────────────────────────────────────────────────────────
-deny[msg] if {
+deny contains msg if {
   r := resources[_]
   r.type == "azurerm_storage_account"
   r.change.after.enable_https_traffic_only != true
@@ -60,7 +61,7 @@ deny[msg] if {
 # ─────────────────────────────────────────────────────────────────────────────
 # Rule 4: Deny Key Vault with insufficient soft-delete retention
 # ─────────────────────────────────────────────────────────────────────────────
-deny[msg] if {
+deny contains msg if {
   r := resources[_]
   r.type == "azurerm_key_vault"
   retention := r.change.after.soft_delete_retention_days
