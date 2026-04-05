@@ -1,10 +1,12 @@
 name: Cost Check (Infracost + OPA)
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "terraform/**"
+  # Auto triggers disabled during testing — enable after workflow is stable
+  # pull_request:
+  #   branches: [main]
+  #   paths:
+  #     - "terraform/**"
+  workflow_dispatch:
 
 permissions:
   contents: read
