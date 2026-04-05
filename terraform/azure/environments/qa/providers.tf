@@ -22,6 +22,8 @@ provider "azurerm" {
   }
   # Auth via ARM_* env vars — subscription_id required in v4
   subscription_id = var.subscription_id
+  # KodeKloud: SP does not have permission to register resource providers
+  skip_provider_registration = true
 }
 
 provider "azuread" {}
