@@ -20,7 +20,7 @@ locals {
       vnet_cidr     = "10.0.0.0/16"
       subnet_cidrs  = { aks = "10.0.1.0/24", ingress = "10.0.2.0/24", data = "10.0.3.0/24" }
       aks_nodes     = 1
-      aks_vm_size   = "Standard_B2s"
+      aks_vm_size   = "Standard_D2s_v3"  # KodeKloud allowed sizes only
       waf_mode      = "Detection"   # no traffic blocked in dev
       acr_sku       = "Basic"
     }
@@ -89,15 +89,8 @@ module "security_group" {
   tags                = local.tags
 }
 
-module "waf_policy" {
-  source              = "../../modules/waf_policy"
-  environment         = local.env
-  location            = var.location
-  location_short      = local.location_short
-  resource_group_name = var.resource_group_name
-  waf_mode            = local.cfg.waf_mode
-  tags                = local.tags
-}
+# WAF policy intentionally disabled — KodeKloud playground blocks WAF policy creation
+# (policy: "Non-compliant with policy standards for Azure_playground")
 
 # --- Compute ------------------------------------------------------------------
 module "aks" {
