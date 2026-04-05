@@ -1,0 +1,28 @@
+# Infracost configuration file
+# Get a free API key: https://www.infracost.io/docs/#2-get-api-key
+# Set as INFRACOST_API_KEY environment variable or GitHub secret
+
+version: 0.1
+
+projects:
+  - path: terraform/azure/environments/dev
+    name: azure-dev
+    terraform_var_files:
+      - terraform.tfvars
+
+  - path: terraform/gcp/environments/dev
+    name: gcp-dev
+    terraform_var_files:
+      - terraform.tfvars
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cost optimisation tips for KodeKloud playground:
+#
+# 1. AKS: Use Standard_B2s (cheapest burstable) — ~$12/month for 1 node
+# 2. GKE: Use e2-standard-2 (cheapest standard) — ~$4.86/month for 1 node
+# 3. ACR: Use Basic SKU — $0.167/month (vs Standard $0.667, Premium $3.33)
+# 4. GCS: Lifecycle rules delete objects > 30 days → reduce storage cost
+# 5. Artifact Registry: Set cleanup policy to delete untagged images after 7 days
+# 6. Destroy every Sunday (see terraform-schedule.yml) — saves ~$5/month
+# 7. Use 1 node per cluster in dev — scale to 2 only for specific tests
+# ─────────────────────────────────────────────────────────────────────────────

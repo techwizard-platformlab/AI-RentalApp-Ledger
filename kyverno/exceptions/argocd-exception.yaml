@@ -1,0 +1,35 @@
+# PolicyException for ArgoCD system pods — they run with elevated permissions
+# and use images from ghcr.io which would otherwise be blocked.
+apiVersion: kyverno.io/v2beta1
+kind: PolicyException
+metadata:
+  name: argocd-system-exception
+  namespace: argocd
+spec:
+  exceptions:
+    # Allow ArgoCD pods to bypass registry restriction
+    - policyName: restrict-image-registries
+      ruleNames:
+        - restrict-registries
+
+    # Allow ArgoCD pods to bypass privileged check (some init containers need it)
+    - policyName: disallow-privileged-containers
+      ruleNames:
+        - deny-privileged
+        - deny-privilege-escalation
+
+    # Allow :latest for ArgoCD system images (managed by Argo team)
+    - policyName: disallow-latest-tag
+      ruleNames:
+        - disallow-latest-or-missing-tag
+
+    # Allow ArgoCD to skip pod security (dex, redis may need more permissions)
+    - policyName: pod-security-baseline
+      ruleNames:
+        - require-readonly-root-filesystem
+
+  match:
+    any:
+      - resources:
+          kinds: [Pod]
+          namespaces: [argocd]

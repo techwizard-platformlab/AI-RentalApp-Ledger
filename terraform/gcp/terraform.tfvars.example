@@ -1,0 +1,25 @@
+# =============================================================================
+# Example terraform.tfvars for dev environment
+# Copy to terraform.tfvars (gitignored) and fill real values
+# =============================================================================
+
+project_id   = "<your-kodekloud-gcp-project-id>"
+region       = "us-central1"
+region_short = "use1"
+environment  = "dev"
+
+project_name = "rentalAppLedger"
+owner        = "ramprasath"
+
+# Networking
+vpc_subnet_cidr = "10.1.1.0/24"
+db_subnet_cidr  = "10.1.2.0/24"
+
+# GKE — 1 node to stay within KodeKloud CPU quota (max 7 vCPUs)
+gke_node_count   = 1
+gke_machine_type = "e2-standard-2"  # 2 vCPU / 8 GB — cheapest viable for GKE
+gke_disk_size_gb = 30               # max 50 GB per KodeKloud limit
+
+# GitHub OIDC — replace with your org/repo
+github_org  = "<your-github-org>"
+github_repo = "AI-RentalApp-Ledger"

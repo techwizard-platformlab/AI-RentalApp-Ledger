@@ -1,0 +1,30 @@
+apiVersion: kyverno.io/v1
+kind: Policy
+metadata:
+  name: require-deployment-labels
+  namespace: rental-dev
+  annotations:
+    policies.kyverno.io/title: Require Deployment Labels
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: low
+    policies.kyverno.io/description: >-
+      All Deployments must have labels: app, version, environment, project=rentalAppLedger.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: check-required-labels
+      match:
+        any:
+          - resources:
+              kinds: [Deployment]
+      validate:
+        message: >-
+          Deployment must have labels: app, version, environment, project=rentalAppLedger
+        pattern:
+          metadata:
+            labels:
+              app: "?*"
+              version: "?*"
+              environment: "?*"
+              project: rentalAppLedger

@@ -1,0 +1,5 @@
+kubernetes>=28.1.0
+requests>=2.31.0
+rich>=13.7.0
+anthropic>=0.34.0    # only needed for --llm claude
+# groq>=0.9.0        # uncomment if using Groq API

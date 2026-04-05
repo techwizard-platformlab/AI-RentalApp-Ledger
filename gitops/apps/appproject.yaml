@@ -1,0 +1,46 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: rental-ledger
+  namespace: argocd
+  labels:
+    project: rentalAppLedger
+spec:
+  description: "rentalAppLedger microservices project — dev and qa environments"
+
+  # Only allow syncing from the rentalAppLedger app repo
+  sourceRepos:
+    - "https://github.com/{org}/rentalAppLedger"
+
+  # Only deploy to rental-dev and rental-qa namespaces
+  destinations:
+    - namespace: rental-dev
+      server: https://kubernetes.default.svc   # in-cluster (AKS)
+    - namespace: rental-qa
+      server: https://kubernetes.default.svc
+    # GKE spoke cluster — register via argocd cluster add
+    - namespace: rental-dev
+      server: https://GKE_CLUSTER_ENDPOINT     # replace after cluster registration
+    - namespace: rental-qa
+      server: https://GKE_CLUSTER_ENDPOINT
+
+  # Restrict which Kubernetes resource kinds can be managed
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+
+  namespaceResourceWhitelist:
+    - group: "apps"
+      kind: Deployment
+    - group: ""
+      kind: Service
+    - group: "networking.k8s.io"
+      kind: Ingress
+    - group: "autoscaling"
+      kind: HorizontalPodAutoscaler
+    - group: ""
+      kind: ConfigMap
+
+  # Orphaned resource monitoring — warn on resources not managed by ArgoCD
+  orphanedResources:
+    warn: true

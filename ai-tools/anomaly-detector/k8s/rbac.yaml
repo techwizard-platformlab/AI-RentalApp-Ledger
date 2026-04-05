@@ -1,0 +1,36 @@
+# Read-only access to Prometheus metrics via ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: anomaly-detector-sa
+  namespace: rental-dev
+  labels:
+    app: anomaly-detector
+    project: rentalAppLedger
+
+---
+# Anomaly detector only reads pod/metrics info — no write access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: anomaly-detector-role
+  namespace: rental-dev
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/log, services, endpoints]
+    verbs: [get, list, watch]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: anomaly-detector-binding
+  namespace: rental-dev
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: anomaly-detector-role
+subjects:
+  - kind: ServiceAccount
+    name: anomaly-detector-sa
+    namespace: rental-dev

@@ -1,0 +1,20 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: EnforceNamingConvention
+metadata:
+  name: enforce-naming-rental
+spec:
+  enforcementAction: warn   # warn first; change to deny once teams adapt
+  match:
+    kinds:
+      - apiGroups: [apps]
+        kinds: [Deployment]
+      - apiGroups: [""]
+        kinds: [Service]
+    namespaces:
+      - rental-dev
+      - rental-qa
+  parameters:
+    # Deployment: {service}-{env}-v{major}  e.g. rental-service-dev-v1
+    deploymentRegex: "^[a-z][a-z0-9-]+-[a-z]+-v[0-9]+$"
+    # Service: svc-{name}  e.g. svc-rental
+    serviceRegex: "^svc-[a-z0-9-]+$"

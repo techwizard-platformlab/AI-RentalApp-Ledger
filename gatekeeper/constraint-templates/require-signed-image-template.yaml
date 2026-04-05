@@ -1,0 +1,82 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Gatekeeper Install (Helm, minimal for dev):
+#   helm repo add gatekeeper https://open-policy-agent.github.io/gatekeeper/charts
+#   helm install gatekeeper gatekeeper/gatekeeper -n gatekeeper-system \
+#     --create-namespace \
+#     --set auditInterval=60 \
+#     --set replicas=1 \
+#     --set resources.requests.cpu=50m \
+#     --set resources.requests.memory=128Mi \
+#     --set resources.limits.cpu=500m \
+#     --set resources.limits.memory=512Mi
+#
+# Coexistence with Kyverno:
+# Both use ValidatingWebhookConfiguration. Kubernetes calls them in sequence
+# (alphabetical by webhook name). Both must admit a request for it to proceed.
+# Gatekeeper handles complex Rego logic; Kyverno handles simpler policies.
+# Set AuditInterval=60s to reduce noise in dev.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: requiresignedimage
+  annotations:
+    description: >-
+      Validates that container images have a valid cosign signature annotation.
+      Works with the cosign keyless signing flow used in ci-build.yml.
+spec:
+  crd:
+    spec:
+      names:
+        kind: RequireSignedImage
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            exemptImages:
+              type: array
+              items:
+                type: string
+              description: List of image prefixes exempt from signing check
+
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package requiresignedimage
+
+        import future.keywords.in
+        import future.keywords.if
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not image_is_exempt(container.image)
+          not image_is_signed(container)
+          msg := sprintf(
+            "Container '%s' uses image '%s' which has no verified cosign signature annotation. Sign the image with 'cosign sign' before deploying.",
+            [container.name, container.image]
+          )
+        }
+
+        # Init containers
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.initContainers[_]
+          not image_is_exempt(container.image)
+          not image_is_signed(container)
+          msg := sprintf(
+            "Init container '%s' uses image '%s' which has no verified cosign signature annotation.",
+            [container.name, container.image]
+          )
+        }
+
+        # Image is considered signed if the pod has a signing annotation
+        # (set by your admission policy or image controller after cosign verification)
+        image_is_signed(container) {
+          annotations := input.review.object.metadata.annotations
+          key := sprintf("cosign.sigstore.dev/imageRef/%s", [container.name])
+          annotations[key]
+        }
+
+        image_is_exempt(image) {
+          exempt := input.parameters.exemptImages[_]
+          startswith(image, exempt)
+        }

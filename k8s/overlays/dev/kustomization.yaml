@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rental-dev
+
+resources:
+  - ../../base/api-gateway
+  - ../../base/rental-service
+  - ../../base/ledger-service
+  - ../../base/notification-service
+
+commonLabels:
+  environment: dev
+
+# Dev: replicas = 1 (base default), HPA min = 1 — no patches needed
+# Images are updated by ArgoCD Image Updater via annotations on the Application CRD

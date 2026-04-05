@@ -1,0 +1,34 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: rental-service-vs
+  namespace: rental-dev
+spec:
+  hosts:
+    - rental-service.rental-dev.svc.cluster.local
+  gateways:
+    - mesh
+  http:
+    - route:
+        - destination:
+            host: rental-service.rental-dev.svc.cluster.local
+            subset: v1
+            port:
+              number: 8001
+          weight: 100
+        # Canary placeholder
+        # - destination:
+        #     host: rental-service.rental-dev.svc.cluster.local
+        #     subset: v2
+        #   weight: 10
+      timeout: 2s
+      retries:
+        attempts: 3
+        perTryTimeout: 2s
+        retryOn: gateway-error,connect-failure,retriable-4xx
+      # Fault injection placeholder (for chaos testing — disable in prod)
+      # fault:
+      #   delay:
+      #     percentage:
+      #       value: 10
+      #     fixedDelay: 1s

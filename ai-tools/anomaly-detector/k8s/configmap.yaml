@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: anomaly-detector-config
+  namespace: rental-dev
+  labels:
+    app: anomaly-detector
+    project: rentalAppLedger
+data:
+  PROMETHEUS_URL: "http://kube-prometheus-stack-prometheus.monitoring:9090"
+  TARGET_NAMESPACE: "rental-dev"
+  ZSCORE_THRESHOLD: "3.0"
+  IQR_MULTIPLIER: "1.5"
+  ROLLING_WINDOW: "10"
+  MEMORY_WARN_PCT: "90.0"
+  ERROR_RATE_CRIT: "0.10"
+  ANOMALY_OUTPUT_PATH: "/tmp/anomalies.json"

@@ -1,0 +1,47 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-gateway-ingress
+  namespace: rental-dev
+  labels:
+    app: api-gateway
+    project: rentalAppLedger
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+    # nginx ingress controller annotations
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    # cert-manager: automatically provision TLS cert
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - rental-app.example.com   # replace with actual domain
+      secretName: rental-app-tls   # cert-manager will create this secret
+  rules:
+    - host: rental-app.example.com
+      http:
+        paths:
+          - path: /api/rental(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: rental-service
+                port:
+                  number: 8001
+          - path: /api/ledger(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: ledger-service
+                port:
+                  number: 8002
+          - path: /(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 80

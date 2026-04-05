@@ -1,0 +1,48 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rental-ledger-qa
+  namespace: argocd
+  labels:
+    project: rentalAppLedger
+    environment: qa
+  annotations:
+    # QA uses same Image Updater config but manual sync
+    argocd-image-updater.argoproj.io/image-list: |
+      api-gateway={ACR_NAME}.azurecr.io/api-gateway,
+      rental-service={ACR_NAME}.azurecr.io/rental-service,
+      ledger-service={ACR_NAME}.azurecr.io/ledger-service,
+      notification-service={ACR_NAME}.azurecr.io/notification-service
+    argocd-image-updater.argoproj.io/write-back-method: git
+    argocd-image-updater.argoproj.io/git-branch: qa
+    # Notifications
+    notifications.argoproj.io/subscribe.on-sync-succeeded.discord: "rental-deployments"
+    notifications.argoproj.io/subscribe.on-sync-failed.discord: "rental-deployments"
+    notifications.argoproj.io/subscribe.on-health-degraded.discord: "rental-deployments"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: rental-ledger
+
+  source:
+    repoURL: "https://github.com/{org}/rentalAppLedger"
+    targetRevision: qa            # track the qa branch
+    path: k8s/overlays/qa
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rental-qa
+
+  # QA: manual sync — human must click Sync in ArgoCD UI or run argocd app sync
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+
+  revisionHistoryLimit: 5

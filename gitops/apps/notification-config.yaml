@@ -1,0 +1,62 @@
+# ArgoCD Notifications — ConfigMap for Discord webhook triggers
+# Applied to argocd namespace alongside the ArgoCD install
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-notifications-cm
+  namespace: argocd
+data:
+  # ── Notification services ─────────────────────────────────────────────────
+  service.discord: |
+    webhookURL: $discord-webhook-url
+
+  # ── Templates ─────────────────────────────────────────────────────────────
+  template.app-sync-succeeded: |
+    discord:
+      content: |
+        ✅ **ArgoCD Sync Succeeded**
+        App: `{{.app.metadata.name}}`
+        Environment: `{{.app.metadata.labels.environment}}`
+        Revision: `{{.app.status.sync.revision}}`
+
+  template.app-sync-failed: |
+    discord:
+      content: |
+        ❌ **ArgoCD Sync FAILED**
+        App: `{{.app.metadata.name}}`
+        Environment: `{{.app.metadata.labels.environment}}`
+        Message: `{{.app.status.operationState.message}}`
+
+  template.app-health-degraded: |
+    discord:
+      content: |
+        ⚠️ **App Health Degraded**
+        App: `{{.app.metadata.name}}`
+        Health: `{{.app.status.health.status}}`
+        Message: `{{.app.status.health.message}}`
+
+  # ── Triggers ──────────────────────────────────────────────────────────────
+  trigger.on-sync-succeeded: |
+    - when: app.status.operationState.phase in ['Succeeded']
+      send: [app-sync-succeeded]
+
+  trigger.on-sync-failed: |
+    - when: app.status.operationState.phase in ['Error', 'Failed']
+      send: [app-sync-failed]
+
+  trigger.on-health-degraded: |
+    - when: app.status.health.status == 'Degraded'
+      send: [app-health-degraded]
+
+---
+# Secret for Discord webhook URL
+# Set via: kubectl create secret generic argocd-notifications-secret \
+#   -n argocd --from-literal=discord-webhook-url=<your-webhook-url>
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argocd-notifications-secret
+  namespace: argocd
+type: Opaque
+# stringData:
+#   discord-webhook-url: "https://discord.com/api/webhooks/..."

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rental-service-config
+  namespace: rental-dev
+  labels:
+    app: rental-service
+    project: rentalAppLedger
+data:
+  LOG_LEVEL: "INFO"
+  DB_HOST: "postgresql.rental-dev.svc.cluster.local"
+  ENVIRONMENT: "dev"

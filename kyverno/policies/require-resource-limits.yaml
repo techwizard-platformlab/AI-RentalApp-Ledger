@@ -1,0 +1,105 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-resource-limits
+  annotations:
+    policies.kyverno.io/title: Require Resource Limits and Requests
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      All containers must define CPU and memory requests and limits within approved ranges.
+      Generates a default ResourceQuota if namespace lacks one.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    # ── Validate: require requests and limits ────────────────────────────────
+    - name: require-requests-and-limits
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [rental-dev, rental-qa]
+      validate:
+        message: "All containers must set CPU and memory requests and limits."
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ element.resources.requests.cpu || '' }}"
+                    operator: Equals
+                    value: ""
+                  - key: "{{ element.resources.requests.memory || '' }}"
+                    operator: Equals
+                    value: ""
+                  - key: "{{ element.resources.limits.cpu || '' }}"
+                    operator: Equals
+                    value: ""
+                  - key: "{{ element.resources.limits.memory || '' }}"
+                    operator: Equals
+                    value: ""
+
+    # ── Validate: minimum requests ──────────────────────────────────────────
+    - name: min-resource-requests
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [rental-dev, rental-qa]
+      validate:
+        message: "Container requests must be at least cpu=50m, memory=64Mi."
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ divide(element.resources.requests.cpu, '50m') }}"
+                    operator: LessThan
+                    value: 1
+                  - key: "{{ divide(element.resources.requests.memory, '64Mi') }}"
+                    operator: LessThan
+                    value: 1
+
+    # ── Validate: maximum limits ─────────────────────────────────────────────
+    - name: max-resource-limits
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [rental-dev, rental-qa]
+      validate:
+        message: "Container limits must not exceed cpu=2, memory=1Gi."
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ divide(element.resources.limits.cpu, '2') }}"
+                    operator: GreaterThan
+                    value: 1
+                  - key: "{{ divide(element.resources.limits.memory, '1Gi') }}"
+                    operator: GreaterThan
+                    value: 1
+
+    # ── Generate: default ResourceQuota if namespace has none ───────────────
+    - name: generate-default-resourcequota
+      match:
+        any:
+          - resources:
+              kinds: [Namespace]
+              names: [rental-dev, rental-qa]
+      generate:
+        apiVersion: v1
+        kind: ResourceQuota
+        name: default-quota
+        namespace: "{{request.object.metadata.name}}"
+        synchronize: true
+        data:
+          spec:
+            hard:
+              requests.cpu: "2"
+              requests.memory: 2Gi
+              limits.cpu: "4"
+              limits.memory: 4Gi
+              pods: "20"

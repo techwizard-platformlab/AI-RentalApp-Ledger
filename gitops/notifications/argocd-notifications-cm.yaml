@@ -1,0 +1,173 @@
+# ArgoCD Notifications ConfigMap
+# Requires argocd-notifications controller (included in ArgoCD ≥ v2.5).
+#
+# Apply:
+#   kubectl apply -f gitops/notifications/argocd-notifications-cm.yaml -n argocd
+#
+# Verify triggers fire:
+#   kubectl exec -n argocd deploy/argocd-notifications-controller -- \
+#     argocd-notifications template notify sync-succeeded \
+#       --app rentalapp-dev --recipient discord:rentalapp
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-notifications-cm
+  namespace: argocd
+data:
+  # ── Service: Discord webhook ──────────────────────────────────────────────
+  service.webhook.discord: |
+    url: $discord-webhook-url
+    headers:
+      - name: Content-Type
+        value: application/json
+
+  # ── Templates ─────────────────────────────────────────────────────────────
+
+  # 1. Sync succeeded — green ✅
+  template.sync-succeeded: |
+    webhook:
+      discord:
+        method: POST
+        body: |
+          {
+            "username": "rentalAppLedger Bot",
+            "embeds": [{
+              "title": "✅ Sync Succeeded — {{.app.metadata.name}}",
+              "description": "Application **{{.app.metadata.name}}** synced successfully to **{{.app.spec.destination.namespace}}**.",
+              "color": 3066993,
+              "fields": [
+                {"name": "Revision",     "value": "{{.app.status.sync.revision | trunc 7}}", "inline": true},
+                {"name": "Environment",  "value": "{{index .app.metadata.labels \"env\" | default \"dev\"}}", "inline": true},
+                {"name": "Sync Status",  "value": "{{.app.status.sync.status}}",   "inline": true},
+                {"name": "Health",       "value": "{{.app.status.health.status}}", "inline": true}
+              ],
+              "footer": {"text": "ArgoCD • rentalAppLedger"},
+              "timestamp": "{{now | date \"2006-01-02T15:04:05Z\"}}"
+            }]
+          }
+
+  # 2. Sync failed — red ❌
+  template.sync-failed: |
+    webhook:
+      discord:
+        method: POST
+        body: |
+          {
+            "username": "rentalAppLedger Bot",
+            "content": "@here",
+            "embeds": [{
+              "title": "❌ Sync Failed — {{.app.metadata.name}}",
+              "description": "Application **{{.app.metadata.name}}** failed to sync.\n```{{.app.status.operationState.message}}```",
+              "color": 15158332,
+              "fields": [
+                {"name": "Revision",    "value": "{{.app.status.sync.revision | trunc 7}}", "inline": true},
+                {"name": "Environment", "value": "{{index .app.metadata.labels \"env\" | default \"dev\"}}", "inline": true},
+                {"name": "Phase",       "value": "{{.app.status.operationState.phase}}",    "inline": true}
+              ],
+              "footer": {"text": "ArgoCD • rentalAppLedger"},
+              "timestamp": "{{now | date \"2006-01-02T15:04:05Z\"}}"
+            }]
+          }
+
+  # 3. App degraded — red ❌ (health check failing)
+  template.app-degraded: |
+    webhook:
+      discord:
+        method: POST
+        body: |
+          {
+            "username": "rentalAppLedger Bot",
+            "content": "@here",
+            "embeds": [{
+              "title": "❌ App Degraded — {{.app.metadata.name}}",
+              "description": "Application **{{.app.metadata.name}}** health status is **{{.app.status.health.status}}**.\n{{.app.status.health.message}}",
+              "color": 15158332,
+              "fields": [
+                {"name": "Namespace",   "value": "{{.app.spec.destination.namespace}}", "inline": true},
+                {"name": "Sync Status", "value": "{{.app.status.sync.status}}",         "inline": true}
+              ],
+              "footer": {"text": "ArgoCD • rentalAppLedger"},
+              "timestamp": "{{now | date \"2006-01-02T15:04:05Z\"}}"
+            }]
+          }
+
+  # 4. Out of sync — yellow ⚠️ (deduplicated: only alert every 10 min)
+  template.out-of-sync: |
+    webhook:
+      discord:
+        method: POST
+        body: |
+          {
+            "username": "rentalAppLedger Bot",
+            "embeds": [{
+              "title": "⚠️ Out of Sync — {{.app.metadata.name}}",
+              "description": "Application **{{.app.metadata.name}}** is out of sync.\nRevision in cluster: `{{.app.status.sync.revision | trunc 7}}`",
+              "color": 16776960,
+              "fields": [
+                {"name": "Environment", "value": "{{index .app.metadata.labels \"env\" | default \"dev\"}}", "inline": true},
+                {"name": "Target",      "value": "{{.app.spec.source.targetRevision}}", "inline": true}
+              ],
+              "footer": {"text": "ArgoCD • rentalAppLedger"},
+              "timestamp": "{{now | date \"2006-01-02T15:04:05Z\"}}"
+            }]
+          }
+
+  # 5. Rollback — orange 🔄
+  template.rollback: |
+    webhook:
+      discord:
+        method: POST
+        body: |
+          {
+            "username": "rentalAppLedger Bot",
+            "embeds": [{
+              "title": "🔄 Rollback — {{.app.metadata.name}}",
+              "description": "Application **{{.app.metadata.name}}** was rolled back.\nRevision: `{{.app.status.sync.revision | trunc 7}}`",
+              "color": 16744272,
+              "fields": [
+                {"name": "Environment", "value": "{{index .app.metadata.labels \"env\" | default \"dev\"}}", "inline": true},
+                {"name": "Initiated by","value": "{{.app.status.operationState.initiatedBy.username | default \"argocd\"}}", "inline": true}
+              ],
+              "footer": {"text": "ArgoCD • rentalAppLedger"},
+              "timestamp": "{{now | date \"2006-01-02T15:04:05Z\"}}"
+            }]
+          }
+
+  # ── Triggers ──────────────────────────────────────────────────────────────
+
+  trigger.on-sync-succeeded: |
+    - when: app.status.operationState.phase in ['Succeeded']
+      send: [sync-succeeded]
+
+  trigger.on-sync-failed: |
+    - when: app.status.operationState.phase in ['Failed', 'Error']
+      send: [sync-failed]
+
+  trigger.on-app-degraded: |
+    - when: app.status.health.status == 'Degraded'
+      send: [app-degraded]
+
+  # Deduplicated: only fire once per 10 minutes for the same out-of-sync state
+  trigger.on-out-of-sync: |
+    - when: app.status.sync.status == 'OutOfSync'
+      oncePer: app.status.sync.revision
+      send: [out-of-sync]
+
+  trigger.on-rollback: |
+    - when: app.status.operationState.operation.sync.prune == false and
+            app.status.operationState.phase in ['Succeeded'] and
+            app.status.operationState.startedAt != app.status.operationState.finishedAt
+      send: [rollback]
+
+  # ── Subscriptions (default — applies to all apps in argocd namespace) ─────
+  # Override per-app with annotations on the Application CRD (see examples file)
+  subscriptions: |
+    - recipients:
+        - discord:rentalapp
+      triggers:
+        - on-sync-succeeded
+        - on-sync-failed
+        - on-app-degraded
+        - on-out-of-sync
+        - on-rollback
+      selector: env in (dev, qa)

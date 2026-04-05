@@ -1,0 +1,44 @@
+# conftest.toml — Conftest configuration for rentalAppLedger
+# https://www.conftest.dev/configuration/
+
+# Policy directories to load
+policy = ["policy/azure", "policy/gcp", "policy/shared", "policy/cost", "policy/pr"]
+
+# Output format (stdout, json, tap, table)
+output = "stdout"
+
+# Namespace to use when multiple packages are loaded
+# Override per-run with: conftest test --namespace azure plan.json
+namespace = "main"
+
+# Fail on warnings as well (set to false to treat warns as non-blocking)
+fail_on_warn = false
+
+# Data directory (approved_skus.json, etc.)
+data = ["policy/data"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Usage:
+#
+# 1. Generate terraform plan JSON:
+#    terraform init
+#    terraform plan -out=tfplan
+#    terraform show -json tfplan > plan.json
+#
+# 2. Run conftest against Azure plan:
+#    conftest test plan.json --namespace azure --policy policy/azure/
+#
+# 3. Run conftest against GCP plan:
+#    conftest test plan.json --namespace gcp --policy policy/gcp/
+#
+# 4. Run all policies:
+#    conftest test plan.json --policy policy/
+#
+# 5. Run OPA unit tests:
+#    conftest verify --policy policy/azure/
+#    conftest verify --policy policy/gcp/
+#    conftest verify --policy policy/shared/
+#
+# Note: warn[] rules are NON-BLOCKING (exit code 0) and should be surfaced
+# as PR comments. deny[] rules trigger exit code 1 and fail the pipeline.
+# ─────────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,31 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: api-gateway-vs
+  namespace: rental-dev
+spec:
+  hosts:
+    - rental-app.example.com
+    - api-gateway.rental-dev.svc.cluster.local
+  gateways:
+    - rental-gateway     # external traffic via Istio Gateway
+    - mesh               # internal service-mesh traffic
+  http:
+    # Route all /api/* traffic through the api-gateway
+    - match:
+        - uri:
+            prefix: /api/
+      route:
+        - destination:
+            host: api-gateway.rental-dev.svc.cluster.local
+            subset: v1
+            port:
+              number: 8000
+          weight: 100
+        # Canary placeholder: split 90/10 when v2 is deployed
+        # - destination:
+        #     host: api-gateway.rental-dev.svc.cluster.local
+        #     subset: v2
+        #     port:
+        #       number: 8000
+        #   weight: 10

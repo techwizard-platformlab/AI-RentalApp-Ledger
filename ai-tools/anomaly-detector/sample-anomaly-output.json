@@ -1,0 +1,38 @@
+[
+  {
+    "metric": "cpu_usage",
+    "pod": "api-gateway-7d9f8b-xk2p4",
+    "namespace": "rental-dev",
+    "method": "zscore",
+    "value": 0.95,
+    "threshold": 3.0,
+    "severity": "critical",
+    "description": "CPU spike detected on pod api-gateway-7d9f8b-xk2p4: 0.950 cores (z-score > 3.0)",
+    "timestamp": "2026-04-04T18:30:00+00:00",
+    "remediation_hint": "Check for runaway processes. Consider increasing CPU limit or optimising code."
+  },
+  {
+    "metric": "memory_trend",
+    "pod": "rental-service-6c4d9f-rz8m1",
+    "namespace": "rental-dev",
+    "method": "trend",
+    "value": 268435456,
+    "threshold": 0.2,
+    "severity": "warning",
+    "description": "Memory creep detected on pod rental-service-6c4d9f-rz8m1: rolling mean increased >20% over 10 data points.",
+    "timestamp": "2026-04-04T18:30:05+00:00",
+    "remediation_hint": "Possible memory leak. Profile the application or restart the pod."
+  },
+  {
+    "metric": "http_error_rate",
+    "pod": "ledger-service",
+    "namespace": "rental-dev",
+    "method": "iqr",
+    "value": 0.142,
+    "threshold": 0.1,
+    "severity": "critical",
+    "description": "HTTP 5xx error rate for ledger-service spiked to 14.2% (IQR outlier, threshold 10%).",
+    "timestamp": "2026-04-04T18:30:10+00:00",
+    "remediation_hint": "Check application logs. Verify downstream services. Consider circuit breaker."
+  }
+]

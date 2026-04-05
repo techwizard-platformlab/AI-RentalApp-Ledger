@@ -1,0 +1,43 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-image-registries
+  annotations:
+    policies.kyverno.io/title: Restrict Image Registries
+    policies.kyverno.io/category: Supply Chain Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Only images from approved registries (ACR, GCP Artifact Registry, registry.k8s.io)
+      are allowed. Enforced in rental-qa; Audit only in rental-dev.
+spec:
+  # validationFailureAction overridden per namespace below
+  validationFailureAction: Audit   # default (rental-dev)
+  background: true
+  rules:
+    - name: restrict-registries
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [rental-dev, rental-qa]
+      # Per-namespace action override
+      validationFailureActionOverrides:
+        - action: Enforce
+          namespaces: [rental-qa]
+        - action: Audit
+          namespaces: [rental-dev]
+      validate:
+        message: >-
+          Image must be from an approved registry:
+          {ACR_NAME}.azurecr.io, us-central1-docker.pkg.dev/{GCP_PROJECT_ID}, registry.k8s.io
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                all:
+                  - key: "{{ element.image }}"
+                    operator: NotIn
+                    value:
+                      - "{ACR_NAME}.azurecr.io/*"
+                      - "us-central1-docker.pkg.dev/{GCP_PROJECT_ID}/*"
+                      - "registry.k8s.io/*"

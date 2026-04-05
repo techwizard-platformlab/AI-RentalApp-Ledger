@@ -1,0 +1,54 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: anomaly-detector
+  namespace: rental-dev
+  labels:
+    app: anomaly-detector
+    project: rentalAppLedger
+spec:
+  schedule: "*/5 * * * *"   # every 5 minutes
+  concurrencyPolicy: Forbid  # don't run if previous is still running
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: anomaly-detector
+        spec:
+          serviceAccountName: anomaly-detector-sa
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            seccompProfile:
+              type: RuntimeDefault
+          restartPolicy: OnFailure
+          containers:
+            - name: anomaly-detector
+              image: "{registry}/anomaly-detector:latest"
+              imagePullPolicy: Always
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 200m
+                  memory: 256Mi
+              envFrom:
+                - configMapRef:
+                    name: anomaly-detector-config
+                - secretRef:
+                    name: anomaly-detector-secret
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: false   # needs /tmp write
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - mountPath: /tmp
+                  name: tmp-dir
+          volumes:
+            - name: tmp-dir
+              emptyDir: {}

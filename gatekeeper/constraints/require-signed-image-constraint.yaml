@@ -1,0 +1,19 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: RequireSignedImage
+metadata:
+  name: require-signed-images-rental
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: [apps]
+        kinds: [Deployment]
+    namespaces:
+      - rental-dev
+      - rental-qa
+  parameters:
+    # Exempt official K8s infrastructure images from signing requirement
+    exemptImages:
+      - registry.k8s.io/
+      - gcr.io/google_containers/
+      - k8s.gcr.io/

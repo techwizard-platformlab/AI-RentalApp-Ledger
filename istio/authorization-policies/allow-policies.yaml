@@ -1,0 +1,100 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Allow: Istio ingress gateway → api-gateway
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-ingress-to-api-gateway
+  namespace: rental-dev
+spec:
+  selector:
+    matchLabels:
+      app: api-gateway
+  rules:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account"
+      to:
+        - operation:
+            methods: [GET, POST, PUT, DELETE, PATCH]
+            paths: ["/api/*", "/health", "/metrics"]
+
+---
+# Allow: api-gateway → rental-service (specific paths only)
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-api-gateway-to-rental-service
+  namespace: rental-dev
+spec:
+  selector:
+    matchLabels:
+      app: rental-service
+  rules:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/rental-dev/sa/api-gateway"
+      to:
+        - operation:
+            methods: [GET, POST, PUT, DELETE]
+            paths: ["/api/rental/*", "/health"]
+
+---
+# Allow: api-gateway → ledger-service (specific paths only)
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-api-gateway-to-ledger-service
+  namespace: rental-dev
+spec:
+  selector:
+    matchLabels:
+      app: ledger-service
+  rules:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/rental-dev/sa/api-gateway"
+      to:
+        - operation:
+            methods: [GET, POST, PUT]
+            paths: ["/api/ledger/*", "/health"]
+
+---
+# Allow: any service in namespace → notification-service (internal notifications)
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-all-to-notification-service
+  namespace: rental-dev
+spec:
+  selector:
+    matchLabels:
+      app: notification-service
+  rules:
+    - from:
+        - source:
+            namespaces: ["rental-dev"]
+      to:
+        - operation:
+            methods: [GET, POST]
+            paths: ["/notify/*", "/health"]
+
+---
+# Allow: Prometheus scraping metrics from all services
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: rental-dev
+spec:
+  rules:
+    - from:
+        - source:
+            namespaces: ["monitoring"]   # Prometheus namespace
+      to:
+        - operation:
+            paths: ["/metrics"]
+            methods: [GET]

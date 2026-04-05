@@ -1,0 +1,71 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: generate-default-networkpolicy
+  annotations:
+    policies.kyverno.io/title: Generate Default NetworkPolicy
+    policies.kyverno.io/category: Network Security
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      Auto-generates a default-deny NetworkPolicy when a rental-* namespace is created.
+      Allows DNS (port 53) and intra-namespace communication.
+spec:
+  rules:
+    - name: generate-default-deny-networkpolicy
+      match:
+        any:
+          - resources:
+              kinds: [Namespace]
+              names: [rental-dev, rental-qa]
+      generate:
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: default-deny-all
+        namespace: "{{request.object.metadata.name}}"
+        synchronize: true
+        data:
+          spec:
+            podSelector: {}    # applies to all pods in namespace
+            policyTypes:
+              - Ingress
+              - Egress
+            egress:
+              # Allow DNS resolution (CoreDNS)
+              - ports:
+                  - port: 53
+                    protocol: UDP
+                  - port: 53
+                    protocol: TCP
+
+    - name: generate-allow-intra-namespace
+      match:
+        any:
+          - resources:
+              kinds: [Namespace]
+              names: [rental-dev, rental-qa]
+      generate:
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: allow-intra-namespace
+        namespace: "{{request.object.metadata.name}}"
+        synchronize: true
+        data:
+          spec:
+            podSelector: {}
+            policyTypes:
+              - Ingress
+              - Egress
+            ingress:
+              # Allow traffic from same namespace
+              - from:
+                  - podSelector: {}
+            egress:
+              # Allow traffic to same namespace
+              - to:
+                  - podSelector: {}
+              # Allow DNS
+              - ports:
+                  - port: 53
+                    protocol: UDP
+                  - port: 53
+                    protocol: TCP

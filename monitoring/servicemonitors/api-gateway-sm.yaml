@@ -1,0 +1,22 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: api-gateway-sm
+  namespace: rental-dev
+  labels:
+    release: kube-prometheus-stack   # must match Prometheus serviceMonitorSelector
+    app: api-gateway
+    project: rentalAppLedger
+spec:
+  selector:
+    matchLabels:
+      app: api-gateway
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - rental-dev
+      - rental-qa

@@ -1,0 +1,75 @@
+# RBAC for k8s-assistant — two roles:
+# 1. read-only (default): list/get pods, logs, events
+# 2. auto-fix (optional): patch deployments, create rollbacks, scale
+
+# ─── ServiceAccount ──────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s-assistant
+  namespace: rental-dev
+  labels:
+    app: k8s-assistant
+    project: rentalAppLedger
+
+---
+# ─── Read-only Role (always active) ─────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k8s-assistant-readonly
+  namespace: rental-dev
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/log, events, configmaps]
+    verbs: [get, list, watch]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k8s-assistant-readonly-binding
+  namespace: rental-dev
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: k8s-assistant-readonly
+subjects:
+  - kind: ServiceAccount
+    name: k8s-assistant
+    namespace: rental-dev
+
+---
+# ─── Auto-fix Role (apply only when --auto-fix is needed) ───────────────────
+# kubectl apply -f rbac.yaml --selector=role=auto-fix
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k8s-assistant-autofix
+  namespace: rental-dev
+  labels:
+    role: auto-fix
+rules:
+  - apiGroups: [apps]
+    resources: [deployments, deployments/scale]
+    verbs: [get, list, patch, update]
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [get, list]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k8s-assistant-autofix-binding
+  namespace: rental-dev
+  labels:
+    role: auto-fix
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: k8s-assistant-autofix
+subjects:
+  - kind: ServiceAccount
+    name: k8s-assistant
+    namespace: rental-dev

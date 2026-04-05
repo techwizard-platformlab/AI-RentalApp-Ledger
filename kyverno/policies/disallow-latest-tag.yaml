@@ -1,0 +1,43 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-tag
+  annotations:
+    policies.kyverno.io/title: Disallow Latest Tag
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      Images must use a specific tag (SHA digest or semver). :latest and untagged
+      images are blocked in rental-qa; audited in rental-dev.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: disallow-latest-or-missing-tag
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [rental-dev, rental-qa]
+      validationFailureActionOverrides:
+        - action: Enforce
+          namespaces: [rental-qa]
+        - action: Audit
+          namespaces: [rental-dev]
+      validate:
+        message: >-
+          Image tag ':latest' or missing tag is not allowed. Use a specific version
+          (e.g. image:1.2.3 or image@sha256:...).
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                any:
+                  # Block :latest tag
+                  - key: "{{ element.image }}"
+                    operator: Contains
+                    value: ":latest"
+                  # Block missing tag (no colon after the last slash)
+                  - key: "{{ regex_match('^[^:]+$', element.image) }}"
+                    operator: Equals
+                    value: true

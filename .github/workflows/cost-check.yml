@@ -1,0 +1,141 @@
+name: Cost Check (Infracost + OPA)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "terraform/**"
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  cost-check:
+    name: Infracost + OPA Cost Guard
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        cloud: [azure, gcp]
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Azure OIDC ──────────────────────────────────────────────────────────
+      - name: Azure login (OIDC)
+        if: matrix.cloud == 'azure'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # ── GCP OIDC ────────────────────────────────────────────────────────────
+      - name: GCP login (OIDC)
+        if: matrix.cloud == 'gcp'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      # ── Terraform plan ──────────────────────────────────────────────────────
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.7
+
+      - name: Terraform init + plan (${{ matrix.cloud }})
+        working-directory: terraform/${{ matrix.cloud }}/environments/dev
+        run: |
+          terraform init
+          terraform plan -out=tfplan
+          terraform show -json tfplan > plan.json
+
+      # ── Infracost ───────────────────────────────────────────────────────────
+      - name: Setup Infracost
+        uses: infracost/actions/setup@v3
+        with:
+          api-key: ${{ secrets.INFRACOST_API_KEY }}
+
+      - name: Run Infracost breakdown
+        working-directory: terraform/${{ matrix.cloud }}/environments/dev
+        run: |
+          infracost breakdown \
+            --path . \
+            --format json \
+            --out-file infracost.json \
+            --config-file ../../../../.infracost/config.yml
+
+      # ── OPA cost guard ──────────────────────────────────────────────────────
+      - name: Install conftest
+        run: |
+          wget -qO conftest.tar.gz https://github.com/open-policy-agent/conftest/releases/download/v0.50.0/conftest_0.50.0_Linux_x86_64.tar.gz
+          tar xzf conftest.tar.gz
+          sudo mv conftest /usr/local/bin/
+
+      - name: Run OPA cost policy
+        id: opa_cost
+        working-directory: terraform/${{ matrix.cloud }}/environments/dev
+        run: |
+          set +e
+          conftest test infracost.json \
+            --namespace cost \
+            --policy ../../../../policy/cost/cost_guard.rego \
+            --output json > opa_cost_result.json 2>&1
+          EXIT_CODE=$?
+          echo "exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+          set -e
+
+      # ── PR comment with cost table ──────────────────────────────────────────
+      - name: Post cost table as PR comment
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const fs = require('fs');
+            const cloud = '${{ matrix.cloud }}';
+
+            let infracostData = {};
+            try {
+              infracostData = JSON.parse(
+                fs.readFileSync('terraform/' + cloud + '/environments/dev/infracost.json', 'utf8')
+              );
+            } catch (e) {
+              console.log('Could not read infracost.json');
+            }
+
+            // Build markdown table
+            let table = `## 💰 Cost Estimate — ${cloud.toUpperCase()} (dev)\n\n`;
+            table += '| Resource | Monthly Cost | Status |\n';
+            table += '|----------|-------------|--------|\n';
+
+            const projects = infracostData.projects || [];
+            for (const project of projects) {
+              const resources = project?.breakdown?.resources || [];
+              for (const res of resources) {
+                const cost = parseFloat(res.monthlyCost || 0).toFixed(2);
+                const status = parseFloat(cost) > 10 ? '⚠️ High' : '✅ OK';
+                table += `| ${res.name} | $${cost} | ${status} |\n`;
+              }
+            }
+
+            const total = parseFloat(infracostData.totalMonthlyCost || 0).toFixed(2);
+            table += `\n**Total: $${total}/month**\n`;
+
+            const exitCode = '${{ steps.opa_cost.outputs.exit_code }}';
+            if (exitCode !== '0') {
+              table += '\n> ❌ **OPA cost policy FAILED** — deployment blocked until cost is reduced below $30/month.\n';
+            }
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: table
+            });
+
+      - name: Fail if OPA cost policy denied
+        if: steps.opa_cost.outputs.exit_code != '0'
+        run: |
+          echo "OPA cost guard triggered a DENY. See PR comment for details."
+          exit 1

@@ -1,0 +1,55 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: pod-security-baseline
+  annotations:
+    policies.kyverno.io/title: Pod Security Baseline
+    policies.kyverno.io/category: Pod Security Standards
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Replaces deprecated PodSecurityPolicy. Requires runAsNonRoot,
+      readOnlyRootFilesystem, and seccompProfile=RuntimeDefault.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-run-as-non-root
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [rental-dev, rental-qa]
+      validate:
+        message: "Pods must set runAsNonRoot: true in securityContext."
+        pattern:
+          spec:
+            securityContext:
+              runAsNonRoot: true
+
+    - name: require-readonly-root-filesystem
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [rental-dev, rental-qa]
+      validate:
+        message: "All containers must set readOnlyRootFilesystem: true."
+        foreach:
+          - list: "request.object.spec.containers"
+            pattern:
+              securityContext:
+                readOnlyRootFilesystem: true
+
+    - name: require-seccomp-runtime-default
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [rental-dev, rental-qa]
+      validate:
+        message: "Pods must set seccompProfile.type: RuntimeDefault."
+        pattern:
+          spec:
+            securityContext:
+              seccompProfile:
+                type: RuntimeDefault

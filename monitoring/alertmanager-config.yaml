@@ -1,0 +1,83 @@
+# AlertManager configuration — Discord + Email routing
+# Store as Kubernetes secret:
+#   kubectl create secret generic alertmanager-config-secret \
+#     -n monitoring \
+#     --from-file=alertmanager.yaml=monitoring/alertmanager-config.yaml
+#
+# Or apply directly if using alertmanager-config CRD (kube-prometheus-stack v0.65+)
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: [alertname, namespace, severity]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: discord-warning
+
+  routes:
+    # Critical alerts → Discord + Email
+    - match:
+        severity: critical
+      receiver: discord-and-email
+      continue: false
+
+    # Warning alerts → Discord only
+    - match:
+        severity: warning
+      receiver: discord-warning
+      continue: false
+
+receivers:
+  - name: discord-warning
+    discord_configs:
+      - webhook_url: "${DISCORD_WEBHOOK_URL}"
+        title: |-
+          {{ range .Alerts }}[{{ .Labels.severity | toUpper }}] {{ .Annotations.summary }}
+          {{ end }}
+        message: |-
+          {{ range .Alerts }}
+          **Alert:** {{ .Annotations.summary }}
+          **Namespace:** {{ .Labels.namespace }}
+          **Description:** {{ .Annotations.description }}
+          **Severity:** {{ .Labels.severity }}
+          **Started:** {{ .StartsAt | since }}
+          {{ end }}
+
+  - name: discord-and-email
+    discord_configs:
+      - webhook_url: "${DISCORD_WEBHOOK_URL}"
+        title: |-
+          🚨 {{ range .Alerts }}[CRITICAL] {{ .Annotations.summary }}{{ end }}
+        message: |-
+          {{ range .Alerts }}
+          **Alert:** {{ .Annotations.summary }}
+          **Namespace:** {{ .Labels.namespace }}
+          **Description:** {{ .Annotations.description }}
+          **Started:** {{ .StartsAt | since }}
+          {{ end }}
+    email_configs:
+      - to: "${ALERT_EMAIL_TO}"
+        from: alertmanager@rentalapp.io
+        smarthost: "${SMTP_HOST}:587"
+        auth_username: "${SMTP_USERNAME}"
+        auth_password: "${SMTP_PASSWORD}"
+        require_tls: true
+        headers:
+          Subject: '[CRITICAL] rentalAppLedger Alert: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+        html: |-
+          <h2>🚨 Critical Alert</h2>
+          {{ range .Alerts }}
+          <p><strong>Alert:</strong> {{ .Annotations.summary }}</p>
+          <p><strong>Description:</strong> {{ .Annotations.description }}</p>
+          <p><strong>Namespace:</strong> {{ .Labels.namespace }}</p>
+          <p><strong>Severity:</strong> {{ .Labels.severity }}</p>
+          {{ end }}
+
+inhibit_rules:
+  # Suppress warnings when critical is already firing for the same alert+namespace
+  - source_match:
+      severity: critical
+    target_match:
+      severity: warning
+    equal: [alertname, namespace]

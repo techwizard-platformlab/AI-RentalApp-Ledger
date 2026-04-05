@@ -1,0 +1,59 @@
+# Version control
+.git
+.gitignore
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+
+# Test artefacts
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# CI / Infrastructure (not needed in image)
+.github/
+terraform/
+k8s/
+gitops/
+istio/
+kyverno/
+policy/
+prompt/
+bootstrap/
+
+# Documentation
+*.md
+docs/
+
+# Secrets (should never be committed, but extra safety)
+*.env
+.env.*
+secrets/

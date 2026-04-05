@@ -1,0 +1,23 @@
+{
+  "azure": {
+    "aks_vm_sizes": [
+      "Standard_B2s",
+      "Standard_D2s_v3"
+    ],
+    "allowed_regions": [
+      "eastus",
+      "westus",
+      "centralus",
+      "southcentralus"
+    ]
+  },
+  "gcp": {
+    "allowed_regions": [
+      "us-central1",
+      "us-east1",
+      "us-west1",
+      "us-east4"
+    ],
+    "max_node_count": 3
+  }
+}

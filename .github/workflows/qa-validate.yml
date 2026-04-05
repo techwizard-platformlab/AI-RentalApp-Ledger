@@ -1,0 +1,137 @@
+name: QA - BDD Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: dev
+        type: choice
+        options: [dev, qa]
+      cloud:
+        description: "Cloud"
+        required: true
+        default: azure
+        type: choice
+        options: [azure, gcp, both]
+  # Also triggered from ArgoCD PostSync (via repository_dispatch)
+  repository_dispatch:
+    types: [argocd-sync-succeeded]
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  bdd-tests:
+    name: BDD Tests (${{ matrix.cloud }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud: ${{ github.event_name == 'repository_dispatch' && fromJSON('["azure","gcp"]') || (inputs.cloud == 'both' && fromJSON('["azure","gcp"]') || fromJSON(format('["{0}"]', inputs.cloud))) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install QA dependencies
+        run: pip install -r qa/requirements.txt
+
+      # ── Auth ──────────────────────────────────────────────────────────────
+      - name: Azure login (OIDC)
+        if: matrix.cloud == 'azure'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get AKS credentials
+        if: matrix.cloud == 'azure'
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --name rental-aks-dev \
+            --overwrite-existing
+
+      - name: GCP login (OIDC)
+        if: matrix.cloud == 'gcp'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Get GKE credentials
+        if: matrix.cloud == 'gcp'
+        run: |
+          gcloud container clusters get-credentials rental-gke-dev \
+            --region us-central1 \
+            --project ${{ secrets.GCP_PROJECT_ID }}
+
+      # ── Port-forward services for testing ─────────────────────────────────
+      - name: Port-forward API Gateway
+        run: |
+          kubectl port-forward -n rental-dev svc/api-gateway 8000:80 &
+          sleep 5
+
+      - name: Port-forward RAG API
+        run: |
+          kubectl port-forward -n rental-dev svc/rag-api 8080:8080 &
+          sleep 3
+
+      # ── Run BDD tests ──────────────────────────────────────────────────────
+      - name: Run smoke tests
+        env:
+          CLOUD: ${{ matrix.cloud }}
+          ENV: ${{ inputs.environment || 'dev' }}
+          AZURE_BASE_URL: "http://localhost:8000"
+          GCP_BASE_URL: "http://localhost:8000"
+          RAG_BASE_URL: "http://localhost:8080"
+        run: |
+          behave qa/features/ \
+            --tags @smoke \
+            --format behave_html_formatter:HTMLFormatter \
+            --outfile qa/reports/report-${{ matrix.cloud }}.html \
+            --format pretty \
+            --no-capture \
+            || echo "BDD_EXIT_CODE=$?" >> $GITHUB_ENV
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bdd-report-${{ matrix.cloud }}
+          path: qa/reports/report-${{ matrix.cloud }}.html
+          retention-days: 14
+
+      - name: Notify Discord — pass
+        if: env.BDD_EXIT_CODE == '' || env.BDD_EXIT_CODE == '0'
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: success
+          title: "✅ BDD Tests PASSED — ${{ matrix.cloud }} ${{ inputs.environment || 'dev' }}"
+          description: "All smoke tests passed after deployment."
+          color: 0x00ff00
+
+      - name: Notify Discord — fail
+        if: env.BDD_EXIT_CODE != '' && env.BDD_EXIT_CODE != '0'
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: failure
+          title: "❌ BDD Tests FAILED — ${{ matrix.cloud }} ${{ inputs.environment || 'dev' }}"
+          description: "One or more smoke tests failed. See artifact for report."
+          color: 0xff0000
+
+      - name: Fail job if BDD failed
+        if: env.BDD_EXIT_CODE != '' && env.BDD_EXIT_CODE != '0'
+        run: exit 1

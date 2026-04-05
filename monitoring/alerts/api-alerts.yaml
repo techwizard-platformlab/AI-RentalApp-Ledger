@@ -1,0 +1,65 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: api-alerts
+  namespace: monitoring
+  labels:
+    app: rentalapp
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: api-alerts
+      interval: 30s
+      rules:
+
+        # ── HighAPILatency ─────────────────────────────────────────────────────
+        # Uses prometheus_fastapi_instrumentator metric: http_request_duration_seconds
+        # Query example:
+        # histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="api-gateway"}[5m]))
+        - alert: HighAPILatency
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le, job) (
+                rate(http_request_duration_seconds_bucket{
+                  job=~"api-gateway|rental-service|ledger-service"
+                }[5m])
+              )
+            ) > 2
+          for: 5m
+          labels:
+            severity: warning
+            project: rentalAppLedger
+          annotations:
+            summary: "High p95 API latency on {{ $labels.job }}"
+            description: "P95 latency for {{ $labels.job }} is {{ $value | humanizeDuration }} (threshold: 2s) over the last 5 minutes."
+
+        # ── HighErrorRate ──────────────────────────────────────────────────────
+        # Uses prometheus_fastapi_instrumentator: http_requests_total{status_code}
+        # Query example:
+        # sum(rate(http_requests_total{status_code=~"5.."}[2m])) / sum(rate(http_requests_total[2m]))
+        - alert: HighErrorRate
+          expr: |
+            (
+              sum by (job) (rate(http_requests_total{status_code=~"5.."}[2m]))
+              /
+              sum by (job) (rate(http_requests_total[2m]))
+            ) > 0.05
+          for: 2m
+          labels:
+            severity: critical
+            project: rentalAppLedger
+          annotations:
+            summary: "High 5xx error rate on {{ $labels.job }}"
+            description: "Error rate for {{ $labels.job }} is {{ $value | humanizePercentage }} (threshold: 5%) over the last 2 minutes."
+
+        # ── APIDown ────────────────────────────────────────────────────────────
+        - alert: APIDown
+          expr: |
+            absent(up{job="api-gateway"} == 1)
+          for: 1m
+          labels:
+            severity: critical
+            project: rentalAppLedger
+          annotations:
+            summary: "API Gateway is DOWN"
+            description: "No healthy api-gateway instance has been scraped for 1 minute. Service may be completely down."

@@ -1,0 +1,39 @@
+# ArgoCD PostSync Hook — runs validate_deployment.sh after every sync
+# Place this in k8s/overlays/dev/ or apply directly.
+# ArgoCD deletes the Job after it completes (hook-delete-policy).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: post-deploy-validate
+  namespace: rental-dev
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: k8s-assistant   # reuse read-only SA from ai-tools
+      containers:
+        - name: validate
+          image: bitnami/kubectl:latest
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              apt-get install -y curl openssl 2>/dev/null || true
+              /scripts/validate_deployment.sh --cloud azure --env dev --notify discord
+          env:
+            - name: DISCORD_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: notification-secret
+                  key: discord-webhook-url
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: validate-script-cm
+            defaultMode: 0755

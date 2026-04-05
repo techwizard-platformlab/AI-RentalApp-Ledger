@@ -1,0 +1,33 @@
+# =============================================================================
+# Example terraform.tfvars for dev environment
+# Copy to terraform.tfvars (gitignored) and fill real values
+# =============================================================================
+
+environment         = "dev"
+location            = "eastus"
+location_short      = "eus"
+resource_group_name = "<your-existing-resource-group>"  # KodeKloud pre-created RG
+
+project = "rentalAppLedger"
+owner   = "ramprasath"
+
+# Networking
+vnet_address_space = ["10.0.0.0/16"]
+subnet_cidrs = {
+  aks     = "10.0.1.0/24"
+  ingress = "10.0.2.0/24"
+  data    = "10.0.3.0/24"
+}
+
+# AKS — 1 node to minimise cost
+aks_node_count      = 1
+aks_vm_size         = "Standard_B2s"  # cheapest KodeKloud-allowed size
+aks_os_disk_size_gb = 30
+kubernetes_version  = "1.29"
+
+# ACR
+acr_sku = "Basic"  # cheapest tier
+
+# Key Vault
+keyvault_sku              = "standard"
+keyvault_soft_delete_days = 7

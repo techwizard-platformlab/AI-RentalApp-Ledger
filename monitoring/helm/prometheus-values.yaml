@@ -1,0 +1,114 @@
+# kube-prometheus-stack Helm values — minimal for KodeKloud B2s nodes (2 vCPUs, 4 GB RAM)
+# Install:
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+#     -n monitoring --create-namespace \
+#     -f monitoring/helm/prometheus-values.yaml
+
+prometheus:
+  prometheusSpec:
+    # Dev cost saving: no persistent volume (loses data on pod restart)
+    retention: 24h
+    storageSpec: {}
+    scrapeInterval: 30s
+    evaluationInterval: 30s
+
+    # Only load PrometheusRules with this label
+    ruleSelector:
+      matchLabels:
+        app: rentalapp
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+    # Discover ServiceMonitors in all namespaces
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorNamespaceSelector: {}
+    serviceMonitorSelector: {}
+
+grafana:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+  # Dev: no persistence (saves PV cost)
+  persistence:
+    enabled: false
+
+  # Admin password from Kubernetes secret
+  # kubectl create secret generic grafana-admin-secret \
+  #   -n monitoring --from-literal=admin-user=admin --from-literal=admin-password=<password>
+  admin:
+    existingSecret: grafana-admin-secret
+    userKey: admin-user
+    passwordKey: admin-password
+
+  # Sidecar: auto-load dashboards from ConfigMaps labelled grafana_dashboard=1
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+    datasources:
+      enabled: true
+
+  # Quick port-forward access:
+  # kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
+  # Open: http://localhost:3000
+
+  # FastAPI metrics instrumentation (add to app/main.py):
+  # from prometheus_fastapi_instrumentator import Instrumentator
+  # Instrumentator().instrument(app).expose(app)
+  # Metrics available at: http://<service>:<port>/metrics
+
+prometheus-node-exporter:
+  enabled: true
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 20m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+    # Config loaded from alertmanager-config.yaml (separate Secret)
+    configSecret: alertmanager-config-secret
+
+prometheusOperator:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi

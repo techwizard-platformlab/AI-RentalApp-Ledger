@@ -1,0 +1,91 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: pod-alerts
+  namespace: monitoring
+  labels:
+    app: rentalapp   # matches ruleSelector in prometheus-values.yaml
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: pod-alerts
+      interval: 30s
+      rules:
+
+        # ── HighCPU ────────────────────────────────────────────────────────────
+        # Query example:
+        # rate(container_cpu_usage_seconds_total{namespace="rental-dev"}[5m]) * 100
+        - alert: HighCPU
+          expr: |
+            (
+              sum by (pod, namespace) (
+                rate(container_cpu_usage_seconds_total{
+                  namespace=~"rental-.*",
+                  container!=""
+                }[5m])
+              )
+            ) > 0.8
+          for: 5m
+          labels:
+            severity: warning
+            project: rentalAppLedger
+          annotations:
+            summary: "Pod {{ $labels.pod }} CPU > 80%"
+            description: "Pod {{ $labels.pod }} in {{ $labels.namespace }} has been using >80% CPU for 5 minutes."
+
+        # ── PodCrashLooping ───────────────────────────────────────────────────
+        - alert: PodCrashLooping
+          expr: |
+            kube_pod_container_status_waiting_reason{
+              reason="CrashLoopBackOff",
+              namespace=~"rental-.*"
+            } > 0
+          for: 0m
+          labels:
+            severity: critical
+            project: rentalAppLedger
+          annotations:
+            summary: "Pod {{ $labels.pod }} is CrashLoopBackOff"
+            description: "Container {{ $labels.container }} in pod {{ $labels.pod }} ({{ $labels.namespace }}) is in CrashLoopBackOff."
+
+        # ── PodRestartHigh ────────────────────────────────────────────────────
+        - alert: PodRestartHigh
+          expr: |
+            increase(kube_pod_container_status_restarts_total{
+              namespace=~"rental-.*"
+            }[10m]) > 3
+          for: 0m
+          labels:
+            severity: warning
+            project: rentalAppLedger
+          annotations:
+            summary: "Pod {{ $labels.pod }} restarted >3 times in 10 minutes"
+            description: "Pod {{ $labels.pod }} in {{ $labels.namespace }} has restarted {{ $value | humanize }} times in 10 minutes."
+
+        # ── PodOOMKilled ──────────────────────────────────────────────────────
+        - alert: PodOOMKilled
+          expr: |
+            kube_pod_container_status_last_terminated_reason{
+              reason="OOMKilled",
+              namespace=~"rental-.*"
+            } > 0
+          for: 0m
+          labels:
+            severity: critical
+            project: rentalAppLedger
+          annotations:
+            summary: "Pod {{ $labels.pod }} OOM killed"
+            description: "Container {{ $labels.container }} in pod {{ $labels.pod }} was killed by OOM. Increase memory limit or investigate leak."
+
+        # ── DeploymentReplicasMismatch ─────────────────────────────────────────
+        - alert: DeploymentReplicasMismatch
+          expr: |
+            kube_deployment_spec_replicas{namespace=~"rental-.*"}
+            != kube_deployment_status_replicas_available{namespace=~"rental-.*"}
+          for: 5m
+          labels:
+            severity: warning
+            project: rentalAppLedger
+          annotations:
+            summary: "Deployment {{ $labels.deployment }} replicas mismatch"
+            description: "Deployment {{ $labels.deployment }} in {{ $labels.namespace }}: desired {{ $value }} but not all replicas are available after 5 minutes."

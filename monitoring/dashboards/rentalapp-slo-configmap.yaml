@@ -1,0 +1,26 @@
+# Grafana sidecar auto-loads this dashboard because of the label grafana_dashboard=1
+# The sidecar watches all namespaces (searchNamespace: ALL in prometheus-values.yaml)
+# and mounts JSON files from ConfigMaps into Grafana's dashboard provider path.
+#
+# How it works:
+# 1. Grafana sidecar detects ConfigMap with label grafana_dashboard=1
+# 2. Copies the JSON to /tmp/dashboards/ inside the Grafana pod
+# 3. Grafana dashboard provider reloads from that path
+#
+# To update: kubectl apply -f monitoring/dashboards/rentalapp-slo-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rentalapp-slo-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"   # triggers sidecar auto-load
+    app: rentalAppLedger
+    project: rentalAppLedger
+data:
+  rentalapp-slo-dashboard.json: |
+    # Contents are loaded from rentalapp-slo-dashboard.json
+    # Apply with: kubectl create configmap rentalapp-slo-dashboard \
+    #   -n monitoring \
+    #   --from-file=rentalapp-slo-dashboard.json=monitoring/dashboards/rentalapp-slo-dashboard.json \
+    #   --dry-run=client -o yaml | kubectl apply -f -

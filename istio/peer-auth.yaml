@@ -1,0 +1,71 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# PeerAuthentication — enforce STRICT mTLS across the rental-dev namespace
+# All service-to-service traffic must use Istio mutual TLS.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default-strict-mtls
+  namespace: rental-dev
+spec:
+  mtls:
+    mode: STRICT
+
+---
+# Exception: health check probes come from the kubelet (not through sidecar),
+# so allow PERMISSIVE mode on the health port for each service workload.
+# Remove once you configure health checks via Istio's probe rewrite (default in 1.9+).
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: api-gateway-health-permissive
+  namespace: rental-dev
+spec:
+  selector:
+    matchLabels:
+      app: api-gateway
+  portLevelMtls:
+    8000:
+      mode: PERMISSIVE   # kubelet health probes bypass sidecar
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: rental-service-health-permissive
+  namespace: rental-dev
+spec:
+  selector:
+    matchLabels:
+      app: rental-service
+  portLevelMtls:
+    8001:
+      mode: PERMISSIVE
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: ledger-service-health-permissive
+  namespace: rental-dev
+spec:
+  selector:
+    matchLabels:
+      app: ledger-service
+  portLevelMtls:
+    8002:
+      mode: PERMISSIVE
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: notification-service-health-permissive
+  namespace: rental-dev
+spec:
+  selector:
+    matchLabels:
+      app: notification-service
+  portLevelMtls:
+    8003:
+      mode: PERMISSIVE

@@ -1,0 +1,24 @@
+{
+  "_comment": "Expected monthly costs for dev environment (KodeKloud playground). Used for drift detection: warn if actual > baseline * 1.2",
+  "environment": "dev",
+  "last_updated": "2026-04-04",
+  "total_expected_monthly_usd": 18.50,
+  "drift_warn_threshold_pct": 20,
+  "resources": {
+    "azure": {
+      "aks_cluster_b2s_1node": 12.00,
+      "acr_basic": 0.17,
+      "storage_account_lrs": 0.10,
+      "key_vault": 0.05,
+      "vnet": 0.00,
+      "public_ip": 0.00
+    },
+    "gcp": {
+      "gke_e2_standard_2_1node": 4.86,
+      "artifact_registry": 0.10,
+      "gcs_bucket": 0.02,
+      "secret_manager": 0.06,
+      "vpc": 0.00
+    }
+  }
+}

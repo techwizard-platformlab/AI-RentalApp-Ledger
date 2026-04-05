@@ -1,0 +1,59 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: replicalimit
+  annotations:
+    description: >-
+      Limits the maximum number of replicas per Deployment to control costs.
+      rental-dev: max 2, rental-qa: max 3. Blocks scale-up beyond limit.
+spec:
+  crd:
+    spec:
+      names:
+        kind: ReplicaLimit
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            maxReplicas:
+              type: integer
+              description: Maximum allowed replicas for Deployments in this namespace
+
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package replicalimit
+
+        import future.keywords.if
+
+        violation[{"msg": msg}] {
+          input.review.object.kind == "Deployment"
+          replicas := input.review.object.spec.replicas
+          max_replicas := input.parameters.maxReplicas
+          replicas > max_replicas
+          msg := sprintf(
+            "Deployment '%s' requests %d replicas but namespace '%s' has a maximum of %d. This limit protects KodeKloud resource quotas.",
+            [
+              input.review.object.metadata.name,
+              replicas,
+              input.review.object.metadata.namespace,
+              max_replicas
+            ]
+          )
+        }
+
+        # Also block HPA maxReplicas beyond the limit
+        violation[{"msg": msg}] {
+          input.review.object.kind == "HorizontalPodAutoscaler"
+          max_replicas_hpa := input.review.object.spec.maxReplicas
+          max_replicas := input.parameters.maxReplicas
+          max_replicas_hpa > max_replicas
+          msg := sprintf(
+            "HPA '%s' sets maxReplicas=%d but namespace limit is %d.",
+            [
+              input.review.object.metadata.name,
+              max_replicas_hpa,
+              max_replicas
+            ]
+          )
+        }

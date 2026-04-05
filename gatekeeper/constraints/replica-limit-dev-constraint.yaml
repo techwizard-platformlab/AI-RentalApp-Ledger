@@ -1,0 +1,16 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: ReplicaLimit
+metadata:
+  name: replica-limit-dev
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: [apps]
+        kinds: [Deployment]
+      - apiGroups: [autoscaling]
+        kinds: [HorizontalPodAutoscaler]
+    namespaces:
+      - rental-dev
+  parameters:
+    maxReplicas: 2   # dev: KodeKloud cost guard

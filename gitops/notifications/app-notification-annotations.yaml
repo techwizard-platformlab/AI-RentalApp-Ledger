@@ -1,0 +1,111 @@
+# ArgoCD Notification Annotation Examples
+# Add these annotations to your Application CRDs to control which notifications
+# each application emits. The subscriptions in argocd-notifications-cm.yaml
+# act as the default; per-app annotations override or extend them.
+#
+# The selector `env in (dev, qa)` in the ConfigMap means apps labelled with
+# env=dev or env=qa automatically receive all five notification triggers.
+# Use these annotations to fine-tune on a per-app basis.
+#
+# Reference: https://argocd-notifications.readthedocs.io/en/stable/subscriptions/
+
+# ── Example 1: rentalapp-dev ──────────────────────────────────────────────
+# Full notifications: all 5 triggers → Discord
+# Inherits the default subscription from the ConfigMap (env=dev label matches).
+# No extra annotation needed for default behaviour.
+#
+# To explicitly opt in to individual triggers only:
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rentalapp-dev
+  namespace: argocd
+  labels:
+    env: dev                          # required for ConfigMap selector to match
+  annotations:
+    # Opt in to all triggers explicitly (mirrors ConfigMap default):
+    notifications.argoproj.io/subscribe.on-sync-succeeded.discord: rentalapp
+    notifications.argoproj.io/subscribe.on-sync-failed.discord:    rentalapp
+    notifications.argoproj.io/subscribe.on-app-degraded.discord:   rentalapp
+    notifications.argoproj.io/subscribe.on-out-of-sync.discord:    rentalapp
+    notifications.argoproj.io/subscribe.on-rollback.discord:       rentalapp
+spec:
+  # ... (rest of spec unchanged — see gitops/apps/app-dev.yaml)
+  project: rentalAppLedger
+  source:
+    repoURL: "https://github.com/<org>/rentalAppLedger"
+    targetRevision: main
+    path: k8s/overlays/dev
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rental-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+
+---
+
+# ── Example 2: rentalapp-qa ───────────────────────────────────────────────
+# Quieter: skip out-of-sync noise (QA is manually synced), keep critical only.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rentalapp-qa
+  namespace: argocd
+  labels:
+    env: qa                           # matches ConfigMap selector
+  annotations:
+    # Override: receive only failure/degraded alerts for QA (less noise)
+    notifications.argoproj.io/subscribe.on-sync-failed.discord:  rentalapp
+    notifications.argoproj.io/subscribe.on-app-degraded.discord: rentalapp
+    notifications.argoproj.io/subscribe.on-rollback.discord:     rentalapp
+    # Explicitly NOT subscribing to on-sync-succeeded and on-out-of-sync for qa
+spec:
+  project: rentalAppLedger
+  source:
+    repoURL: "https://github.com/<org>/rentalAppLedger"
+    targetRevision: qa
+    path: k8s/overlays/qa
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rental-qa
+  syncPolicy: {}                      # manual sync for QA
+
+---
+
+# ── How OutOfSync deduplication works ────────────────────────────────────
+# The trigger on-out-of-sync uses `oncePer: app.status.sync.revision`.
+# This means ArgoCD Notifications sends at most ONE out-of-sync alert per
+# unique revision. A new commit causing another out-of-sync state will
+# fire the trigger again, but the same pending revision won't re-alert
+# within a single sync cycle — preventing alert storms during slow rollouts.
+#
+# Additional time-based cooldown (10 min):
+# Add to the trigger in argocd-notifications-cm.yaml if needed:
+#   - when: app.status.sync.status == 'OutOfSync'
+#     oncePer: app.status.sync.revision
+#     send: [out-of-sync]
+#
+# For strict 10-minute throttle, configure repeat_interval in AlertManager
+# (see monitoring/alertmanager-config.yaml) if routing Prometheus alerts,
+# or use ArgoCD's built-in oncePer combined with CI/CD pipeline dedup.
+
+# ── Test commands ─────────────────────────────────────────────────────────
+# List all configured templates:
+#   kubectl exec -n argocd deploy/argocd-notifications-controller -- \
+#     argocd-notifications template list
+#
+# Dry-run a specific template:
+#   kubectl exec -n argocd deploy/argocd-notifications-controller -- \
+#     argocd-notifications template notify sync-succeeded \
+#       --app rentalapp-dev --recipient discord:rentalapp
+#
+# List active subscriptions for an app:
+#   kubectl exec -n argocd deploy/argocd-notifications-controller -- \
+#     argocd-notifications subscription list --app rentalapp-dev
+#
+# Trigger a test notification manually:
+#   kubectl exec -n argocd deploy/argocd-notifications-controller -- \
+#     argocd-notifications trigger notify on-sync-succeeded \
+#       --app rentalapp-dev

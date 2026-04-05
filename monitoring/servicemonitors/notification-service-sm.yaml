@@ -1,0 +1,22 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: notification-service-sm
+  namespace: rental-dev
+  labels:
+    release: kube-prometheus-stack
+    app: notification-service
+    project: rentalAppLedger
+spec:
+  selector:
+    matchLabels:
+      app: notification-service
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - rental-dev
+      - rental-qa

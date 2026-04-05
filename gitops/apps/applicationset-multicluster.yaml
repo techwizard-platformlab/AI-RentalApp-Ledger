@@ -1,0 +1,80 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: rental-ledger-multicluster
+  namespace: argocd
+  labels:
+    project: rentalAppLedger
+spec:
+  # ── Cluster generator: deploy one Application per registered cluster ──────
+  generators:
+    - list:
+        elements:
+          # AKS (hub cluster — ArgoCD runs here)
+          - cluster: aks
+            url: https://kubernetes.default.svc
+            cloud: azure
+            registry: "{ACR_NAME}.azurecr.io"
+            environment: dev
+            namespace: rental-dev
+
+          # GKE (spoke cluster — registered via argocd cluster add)
+          - cluster: gke
+            url: https://GKE_CLUSTER_ENDPOINT   # replace after: argocd cluster add gke-context
+            cloud: gcp
+            registry: "us-central1-docker.pkg.dev/{GCP_PROJECT_ID}/rental-app"
+            environment: dev
+            namespace: rental-dev
+
+  # ── Application template ──────────────────────────────────────────────────
+  template:
+    metadata:
+      name: "rental-ledger-{{cluster}}-{{environment}}"
+      namespace: argocd
+      labels:
+        project: rentalAppLedger
+        cloud: "{{cloud}}"
+        environment: "{{environment}}"
+        cluster: "{{cluster}}"
+      annotations:
+        # Sync waves ensure correct ordering across all resources
+        # Wave 0: namespaces, Wave 1: configmaps, Wave 2: deployments, Wave 3: ingress+hpa
+        notifications.argoproj.io/subscribe.on-sync-succeeded.discord: "rental-deployments"
+        notifications.argoproj.io/subscribe.on-sync-failed.discord: "rental-deployments"
+        notifications.argoproj.io/subscribe.on-health-degraded.discord: "rental-deployments"
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: rental-ledger
+
+      source:
+        repoURL: "https://github.com/{org}/rentalAppLedger"
+        targetRevision: main
+        path: "k8s/overlays/{{environment}}"
+        # Kustomize: override image registry per cluster
+        kustomize:
+          images:
+            - "api-gateway={{registry}}/api-gateway:latest"
+            - "rental-service={{registry}}/rental-service:latest"
+            - "ledger-service={{registry}}/ledger-service:latest"
+            - "notification-service={{registry}}/notification-service:latest"
+
+      destination:
+        server: "{{url}}"
+        namespace: "{{namespace}}"
+
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - PrunePropagationPolicy=foreground
+        retry:
+          limit: 3
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 1m
+
+      revisionHistoryLimit: 5

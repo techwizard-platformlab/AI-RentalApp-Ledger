@@ -1,0 +1,63 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rag-indexer
+  namespace: rental-dev
+  labels:
+    app: rag-indexer
+    project: rentalAppLedger
+spec:
+  schedule: "0 * * * *"    # every hour
+  concurrencyPolicy: Forbid # prevent concurrent index writes to ChromaDB PVC
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            fsGroup: 1001
+          containers:
+            - name: indexer
+              image: "{registry}/rag-api:latest"
+              command: ["python", "indexer.py"]
+              resources:
+                requests:
+                  cpu: 200m
+                  memory: 512Mi
+                limits:
+                  cpu: 500m
+                  memory: 1Gi
+              envFrom:
+                - configMapRef:
+                    name: rag-config
+                - secretRef:
+                    name: rag-secret
+              volumeMounts:
+                - name: chroma-storage
+                  mountPath: /data
+          volumes:
+            - name: chroma-storage
+              persistentVolumeClaim:
+                claimName: chroma-pvc
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rag-config
+  namespace: rental-dev
+data:
+  CHROMA_PATH: "/data/chroma"
+  CHROMA_COLLECTION: "rental_ledger"
+  EMBED_MODEL: "all-MiniLM-L6-v2"
+  LLM_PROVIDER: "ollama"
+  OLLAMA_URL: "http://ollama.rental-dev.svc.cluster.local:11434"
+  OLLAMA_MODEL: "llama3.2"
+  DB_HOST: "postgresql.rental-dev.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "rentaldb"
+  DB_USER: "rentaluser"
+  WATERMARK_PATH: "/data/last_indexed.json"

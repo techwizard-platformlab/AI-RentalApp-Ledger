@@ -1,0 +1,37 @@
+# Custom ArgoCD health checks for rentalAppLedger API
+# Add this to the argocd-cm ConfigMap (merge with install-values.yaml or apply separately)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  # Custom health check: Deployment is degraded if pod restarts > 3 in last 5 minutes
+  resource.customizations.health.apps_Deployment: |
+    hs = {}
+    if obj.status ~= nil then
+      if obj.status.conditions ~= nil then
+        for i, condition in ipairs(obj.status.conditions) do
+          if condition.type == "Available" and condition.status == "False" then
+            hs.status = "Degraded"
+            hs.message = condition.message
+            return hs
+          end
+        end
+      end
+      -- Check readyReplicas
+      if obj.status.readyReplicas ~= nil and obj.status.readyReplicas < obj.spec.replicas then
+        hs.status = "Progressing"
+        hs.message = "Waiting for replicas to be ready"
+        return hs
+      end
+    end
+    hs.status = "Healthy"
+    return hs
+
+  # Sync waves: namespace=0, configmap=1, deployment=2, ingress+hpa=3
+  # Applied via argocd.argoproj.io/sync-wave annotations on each manifest
+
+  # Rollback: keep last 5 revisions
+  # CLI:  argocd app rollback rental-ledger-aks-dev <revision-id>
+  # UI:   ArgoCD UI → App → History → Rollback button

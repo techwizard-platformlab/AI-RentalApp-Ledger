@@ -1,0 +1,67 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: node-alerts
+  namespace: monitoring
+  labels:
+    app: rentalapp
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: node-alerts
+      interval: 30s
+      rules:
+
+        # ── NodeHighCPU ────────────────────────────────────────────────────────
+        # Query example:
+        # 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+        - alert: NodeHighCPU
+          expr: |
+            100 - (
+              avg by (instance) (
+                rate(node_cpu_seconds_total{mode="idle"}[5m])
+              ) * 100
+            ) > 85
+          for: 5m
+          labels:
+            severity: warning
+            project: rentalAppLedger
+          annotations:
+            summary: "Node {{ $labels.instance }} CPU > 85%"
+            description: "Node {{ $labels.instance }} has been using >85% CPU for 5 minutes. Risk of pod eviction on B2s nodes."
+
+        # ── NodeMemoryPressure ─────────────────────────────────────────────────
+        # Query example:
+        # node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes * 100 < 10
+        - alert: NodeMemoryPressure
+          expr: |
+            (
+              node_memory_MemAvailable_bytes
+              / node_memory_MemTotal_bytes
+              * 100
+            ) < 10
+          for: 2m
+          labels:
+            severity: critical
+            project: rentalAppLedger
+          annotations:
+            summary: "Node {{ $labels.instance }} memory < 10% available"
+            description: "Node {{ $labels.instance }} has only {{ $value | humanizePercentage }} memory available. Pods may be OOM killed."
+
+        # ── NodeDiskPressure ───────────────────────────────────────────────────
+        # Query example:
+        # node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} * 100 < 15
+        - alert: NodeDiskPressure
+          expr: |
+            (
+              node_filesystem_avail_bytes{mountpoint="/", fstype!="tmpfs"}
+              / node_filesystem_size_bytes{mountpoint="/", fstype!="tmpfs"}
+              * 100
+            ) < 15
+          for: 5m
+          labels:
+            severity: warning
+            project: rentalAppLedger
+          annotations:
+            summary: "Node {{ $labels.instance }} disk < 15% available"
+            description: "Node {{ $labels.instance }} filesystem {{ $labels.mountpoint }} has {{ $value | humanizePercentage }} free. Clean up images or increase disk."
