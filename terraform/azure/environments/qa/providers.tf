@@ -4,7 +4,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 3.0"
+      version = "~> 4.0"
     }
     azuread = {
       source  = "hashicorp/azuread"
@@ -20,7 +20,8 @@ provider "azurerm" {
       recover_soft_deleted_key_vaults = true
     }
   }
-  # Auth via ARM_CLIENT_ID, ARM_CLIENT_SECRET, ARM_TENANT_ID, ARM_SUBSCRIPTION_ID
+  # Auth via ARM_* env vars — subscription_id required in v4
+  subscription_id = var.subscription_id
 }
 
 provider "azuread" {}
