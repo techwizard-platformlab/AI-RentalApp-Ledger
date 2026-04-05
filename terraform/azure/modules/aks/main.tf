@@ -17,7 +17,7 @@ resource "azurerm_kubernetes_cluster" "this" {
     os_disk_size_gb     = var.os_disk_size_gb  # max 128 GB, keep 30 GB for cost
     vnet_subnet_id      = var.subnet_id
     type                = "VirtualMachineScaleSets"
-    enable_auto_scaling = false # disable autoscale to avoid surprise VM costs in dev
+    auto_scaling_enabled = false # disable autoscale to avoid surprise VM costs in dev
   }
 
   # Managed identity (no service principal credentials to rotate)

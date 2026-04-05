@@ -9,7 +9,7 @@ resource "azurerm_key_vault" "this" {
   sku_name                    = var.sku                    # standard (no HSM)
   soft_delete_retention_days  = var.soft_delete_days       # 7 days minimum — reduces accidental lock-in
   purge_protection_enabled    = false                      # false for dev; enable for prod
-  enable_rbac_authorization   = true                       # RBAC over legacy access policies (best practice)
+  rbac_authorization_enabled  = true                       # RBAC over legacy access policies (best practice)
   tags                        = var.tags
 }
 
