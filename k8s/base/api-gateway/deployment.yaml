@@ -37,8 +37,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api-gateway
-          # Placeholder — ArgoCD Image Updater will patch this tag
-          image: "{registry}/api-gateway:{tag}"
+          # Image pushed by RentalApp CI → ACR. Tag updated by ArgoCD Image Updater.
+          image: "ACR_LOGIN_SERVER/rental-app-ledger:latest"
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000

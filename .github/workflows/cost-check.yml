@@ -21,12 +21,12 @@ jobs:
       matrix:
         cloud: [azure, gcp]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
       # ── Azure OIDC ──────────────────────────────────────────────────────────
       - name: Azure login (OIDC)
         if: matrix.cloud == 'azure'
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -35,14 +35,14 @@ jobs:
       # ── GCP OIDC ────────────────────────────────────────────────────────────
       - name: GCP login (OIDC)
         if: matrix.cloud == 'gcp'
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed  # v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       # ── Terraform plan ──────────────────────────────────────────────────────
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3
         with:
           terraform_version: 1.5.7
 
@@ -55,7 +55,7 @@ jobs:
 
       # ── Infracost ───────────────────────────────────────────────────────────
       - name: Setup Infracost
-        uses: infracost/actions/setup@v3
+        uses: infracost/actions/setup@e9d6e6cd65e168e76b0de50ff9957d2fe8bb1832  # v3
         with:
           api-key: ${{ secrets.INFRACOST_API_KEY }}
 
@@ -90,7 +90,7 @@ jobs:
 
       # ── PR comment with cost table ──────────────────────────────────────────
       - name: Post cost table as PR comment
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
         if: always()
         with:
           script: |
