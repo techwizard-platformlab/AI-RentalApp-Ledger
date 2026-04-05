@@ -2,19 +2,13 @@ name: "Terraform"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Single workflow for ALL environments and ALL actions.
-# Runtime behaviour is determined by trigger + inputs:
 #
-#   pull_request  → plan only, env=dev  (automatic, no inputs needed)
-#   push to main  → apply,     env=dev  (automatic, no inputs needed)
-#   workflow_dispatch → user chooses: environment / cloud / action
+#   pull_request  → plan only, env=dev  (automatic)
+#   push to main  → apply,     env=dev  (automatic)
+#   workflow_dispatch → user chooses: target_env / cloud / action
 #
-# GitHub Environment protection rules handle approval gates per environment:
-#   azure-dev  / gcp-dev   → no approval required
-#   azure-qa   / gcp-qa    → 1 required reviewer
-#   azure-uat  / gcp-uat   → 1 required reviewer
-#   azure-prod / gcp-prod  → 2 required reviewers + 15-min delay
-#
-# Configure those gates in: repo Settings → Environments
+# Auth: Azure client-secret (OIDC skipped — KodeKloud lab environment subjects
+#       are not registered as federated credentials)
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -33,7 +27,7 @@ on:
 
   workflow_dispatch:
     inputs:
-      environment:
+      target_env:
         description: "Target environment"
         required: true
         default: "dev"
@@ -43,7 +37,7 @@ on:
       cloud:
         description: "Target cloud"
         required: true
-        default: "both"
+        default: "azure"
         type: choice
         options: [azure, gcp, both]
 
@@ -61,114 +55,116 @@ on:
         type: string
 
 concurrency:
-  # Prevent concurrent runs against the same environment
-  group: terraform-${{ github.event.inputs.environment || 'dev' }}-${{ github.ref }}
-  cancel-in-progress: false   # never cancel an in-flight apply/destroy
+  group: terraform-${{ github.event.inputs.target_env || 'dev' }}-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
-  id-token: write        # OIDC for Azure + GCP
-  pull-requests: write   # post plan comments
+  id-token: write
+  pull-requests: write
 
 env:
   TF_VERSION: "1.5.7"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# JOB: setup — resolve environment, action, cloud targets from trigger context
+# JOB: setup
 # ─────────────────────────────────────────────────────────────────────────────
 jobs:
   setup:
     name: "Resolve inputs"
     runs-on: ubuntu-latest
     outputs:
-      env:        ${{ steps.resolve.outputs.env }}
-      action:     ${{ steps.resolve.outputs.action }}
-      run_azure:  ${{ steps.resolve.outputs.run_azure }}
-      run_gcp:    ${{ steps.resolve.outputs.run_gcp }}
+      env:       ${{ steps.resolve.outputs.env }}
+      action:    ${{ steps.resolve.outputs.action }}
+      run_azure: ${{ steps.resolve.outputs.run_azure }}
+      run_gcp:   ${{ steps.resolve.outputs.run_gcp }}
 
     steps:
-      - name: Resolve trigger → env / action / cloud
+      - name: Resolve trigger inputs
         id: resolve
         run: |
           TRIGGER="${{ github.event_name }}"
 
-          # ── Auto-triggers always target dev ─────────────────────────────────
           if [ "$TRIGGER" = "pull_request" ]; then
-            echo "env=dev"       >> $GITHUB_OUTPUT
+            echo "env=dev"        >> $GITHUB_OUTPUT
             echo "action=plan"   >> $GITHUB_OUTPUT
             echo "run_azure=true" >> $GITHUB_OUTPUT
-            echo "run_gcp=true"   >> $GITHUB_OUTPUT
+            echo "run_gcp=false"  >> $GITHUB_OUTPUT
             exit 0
           fi
 
           if [ "$TRIGGER" = "push" ]; then
-            echo "env=dev"       >> $GITHUB_OUTPUT
+            echo "env=dev"        >> $GITHUB_OUTPUT
             echo "action=apply"  >> $GITHUB_OUTPUT
             echo "run_azure=true" >> $GITHUB_OUTPUT
-            echo "run_gcp=true"   >> $GITHUB_OUTPUT
+            echo "run_gcp=false"  >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          # ── workflow_dispatch — use user inputs ──────────────────────────────
-          ENV="${{ github.event.inputs.environment }}"
+          ENV="${{ github.event.inputs.target_env }}"
           ACTION="${{ github.event.inputs.action }}"
           CLOUD="${{ github.event.inputs.cloud }}"
           CONFIRM="${{ github.event.inputs.confirm }}"
 
-          # Safety check: require typed confirmation for apply/destroy to non-dev envs
+          # Safety check for non-dev apply/destroy
           if [ "$ACTION" != "plan" ] && [ "$ENV" != "dev" ]; then
             if [ "$CONFIRM" != "$ENV" ]; then
-              echo "❌ For $ACTION on $ENV, type the environment name ('$ENV') in the confirm field."
+              echo "ERROR: For $ACTION on $ENV, type the environment name in the confirm field."
               exit 1
             fi
           fi
 
           echo "env=$ENV"     >> $GITHUB_OUTPUT
           echo "action=$ACTION" >> $GITHUB_OUTPUT
-          echo "run_azure=$([ '$CLOUD' != 'gcp'   ] && echo true || echo false)" >> $GITHUB_OUTPUT
-          echo "run_gcp=$([ '$CLOUD'   != 'azure' ] && echo true || echo false)" >> $GITHUB_OUTPUT
+
+          if [ "$CLOUD" = "azure" ] || [ "$CLOUD" = "both" ]; then
+            echo "run_azure=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_azure=false" >> $GITHUB_OUTPUT
+          fi
+
+          if [ "$CLOUD" = "gcp" ] || [ "$CLOUD" = "both" ]; then
+            echo "run_gcp=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_gcp=false" >> $GITHUB_OUTPUT
+          fi
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # JOB: azure — runs against the dynamically resolved environment
-  # GitHub Environments (azure-dev, azure-qa, azure-prod) enforce approval gates
+  # JOB: azure
   # ─────────────────────────────────────────────────────────────────────────────
   azure:
-    name: "Azure · ${{ needs.setup.outputs.env }} · ${{ needs.setup.outputs.action }}"
+    name: "Azure / ${{ needs.setup.outputs.env }} / ${{ needs.setup.outputs.action }}"
     runs-on: ubuntu-latest
     needs: setup
     if: needs.setup.outputs.run_azure == 'true'
 
-    # Dynamic environment name → approval gate is auto-applied based on env config
-    environment: azure-${{ needs.setup.outputs.env }}
-
     defaults:
       run:
-        # Working directory switches automatically with the environment
         working-directory: terraform/azure/environments/${{ needs.setup.outputs.env }}
 
     env:
-      # ── Azure OIDC auth (ARM_* are consumed by azurerm provider) ─────────────
-      ARM_USE_OIDC:        "true"
+      # Client-secret auth (ARM provider)
+      ARM_USE_OIDC:        "false"
       ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_CLIENT_SECRET:   ${{ secrets.AZURE_CLIENT_SECRET }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      # ── Secrets injected as TF_VAR_* — picked up automatically by Terraform ──
-      # Non-secret config (environment, location) comes from terraform.tfvars
-      TF_VAR_resource_group_name: ${{ secrets.AZURE_RESOURCE_GROUP }}
+      TF_VAR_resource_group_name: ${{ secrets.TF_BACKEND_RG }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Terraform ${{ env.TF_VERSION }}
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: true
 
-      - name: Azure OIDC login
+      - name: Azure login
         uses: azure/login@v2
         with:
           client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          client-secret:   ${{ secrets.AZURE_CLIENT_SECRET }}
           tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
@@ -179,20 +175,20 @@ jobs:
 
       - name: Terraform init
         id: init
-        run: terraform init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.TF_BACKEND_RG }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
+            -backend-config="container_name=${{ secrets.TF_BACKEND_CONTAINER }}"
 
       - name: Terraform validate
         id: validate
         run: terraform validate
 
-      # ── PLAN (runs for plan + apply actions) ─────────────────────────────────
       - name: Terraform plan
         id: plan
         if: needs.setup.outputs.action != 'destroy'
-        run: |
-          terraform plan \
-            -out=tfplan.binary \
-            -no-color 2>&1 | tee plan.txt
+        run: terraform plan -out=tfplan.binary -no-color 2>&1 | tee plan.txt
         continue-on-error: true
 
       - name: Convert plan to JSON (OPA input)
@@ -214,7 +210,6 @@ jobs:
             --output json | tee opa-results.json
         continue-on-error: true
 
-      # ── POST PLAN COMMENT on PR ───────────────────────────────────────────────
       - name: Post plan as PR comment
         uses: actions/github-script@v7
         if: github.event_name == 'pull_request' && always()
@@ -224,43 +219,19 @@ jobs:
             const plan = fs.existsSync('terraform/azure/environments/${{ needs.setup.outputs.env }}/plan.txt')
               ? fs.readFileSync('terraform/azure/environments/${{ needs.setup.outputs.env }}/plan.txt', 'utf8').slice(-60000)
               : 'Plan unavailable';
-            const opa  = fs.existsSync('terraform/azure/environments/${{ needs.setup.outputs.env }}/opa-results.json')
-              ? fs.readFileSync('terraform/azure/environments/${{ needs.setup.outputs.env }}/opa-results.json', 'utf8')
-              : '{}';
-            const icon = s => s === 'success' ? '✅' : s === 'failure' ? '❌' : '⚠️';
+            const icon = s => s === 'success' ? 'OK' : s === 'failure' ? 'FAIL' : 'SKIP';
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `## ☁️ Azure \`${{ needs.setup.outputs.env }}\` — Terraform Plan
-            | Step | Status |
-            |------|--------|
-            | fmt      | ${icon('${{ steps.fmt.outcome }}')} |
-            | init     | ${icon('${{ steps.init.outcome }}')} |
-            | validate | ${icon('${{ steps.validate.outcome }}')} |
-            | plan     | ${icon('${{ steps.plan.outcome }}')} |
-            | opa      | ${icon('${{ steps.opa.outcome }}')} |
-            <details><summary>📋 Plan output</summary>
-
-            \`\`\`hcl
-            ${plan}
-            \`\`\`
-            </details>
-            <details><summary>🔐 OPA results</summary>
-
-            \`\`\`json
-            ${opa}
-            \`\`\`
-            </details>`
+              body: `## Azure \`${{ needs.setup.outputs.env }}\` Terraform Plan\n| Step | Status |\n|------|--------|\n| fmt | ${icon('${{ steps.fmt.outcome }}')} |\n| init | ${icon('${{ steps.init.outcome }}')} |\n| validate | ${icon('${{ steps.validate.outcome }}')} |\n| plan | ${icon('${{ steps.plan.outcome }}')} |\n| opa | ${icon('${{ steps.opa.outcome }}')} |\n\`\`\`hcl\n${plan}\n\`\`\``
             });
 
-      # ── APPLY ─────────────────────────────────────────────────────────────────
       - name: Terraform apply
         id: apply
         if: needs.setup.outputs.action == 'apply'
         run: terraform apply -auto-approve -no-color
 
-      # ── DESTROY ───────────────────────────────────────────────────────────────
       - name: Terraform destroy
         id: destroy
         if: needs.setup.outputs.action == 'destroy'
@@ -269,40 +240,34 @@ jobs:
       - name: Job summary
         if: always()
         run: |
-          ACTION="${{ needs.setup.outputs.action }}"
-          ENV="${{ needs.setup.outputs.env }}"
-          echo "### ☁️ Azure \`$ENV\` — \`$ACTION\`" >> $GITHUB_STEP_SUMMARY
+          echo "### Azure ${{ needs.setup.outputs.env }} - ${{ needs.setup.outputs.action }}" >> $GITHUB_STEP_SUMMARY
           echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Env | \`$ENV\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Action | \`$ACTION\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Actor | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Env | ${{ needs.setup.outputs.env }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Action | ${{ needs.setup.outputs.action }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Actor | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # JOB: gcp — mirrors azure, same dynamic env pattern
+  # JOB: gcp
   # ─────────────────────────────────────────────────────────────────────────────
   gcp:
-    name: "GCP · ${{ needs.setup.outputs.env }} · ${{ needs.setup.outputs.action }}"
+    name: "GCP / ${{ needs.setup.outputs.env }} / ${{ needs.setup.outputs.action }}"
     runs-on: ubuntu-latest
     needs: setup
     if: needs.setup.outputs.run_gcp == 'true'
-
-    environment: gcp-${{ needs.setup.outputs.env }}
 
     defaults:
       run:
         working-directory: terraform/gcp/environments/${{ needs.setup.outputs.env }}
 
     env:
-      # ── Secrets injected as TF_VAR_* — picked up automatically by Terraform ──
-      # Non-secret config (environment, region, github_org, github_repo) from terraform.tfvars
       TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Terraform ${{ env.TF_VERSION }}
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
@@ -330,10 +295,7 @@ jobs:
       - name: Terraform plan
         id: plan
         if: needs.setup.outputs.action != 'destroy'
-        run: |
-          terraform plan \
-            -out=tfplan.binary \
-            -no-color 2>&1 | tee plan.txt
+        run: terraform plan -out=tfplan.binary -no-color 2>&1 | tee plan.txt
         continue-on-error: true
 
       - name: Convert plan to JSON (OPA input)
@@ -355,36 +317,6 @@ jobs:
             --output json | tee opa-results.json
         continue-on-error: true
 
-      - name: Post plan as PR comment
-        uses: actions/github-script@v7
-        if: github.event_name == 'pull_request' && always()
-        with:
-          script: |
-            const fs = require('fs');
-            const plan = fs.existsSync('terraform/gcp/environments/${{ needs.setup.outputs.env }}/plan.txt')
-              ? fs.readFileSync('terraform/gcp/environments/${{ needs.setup.outputs.env }}/plan.txt', 'utf8').slice(-60000)
-              : 'Plan unavailable';
-            const icon = s => s === 'success' ? '✅' : s === 'failure' ? '❌' : '⚠️';
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `## 🌐 GCP \`${{ needs.setup.outputs.env }}\` — Terraform Plan
-            | Step | Status |
-            |------|--------|
-            | fmt      | ${icon('${{ steps.fmt.outcome }}')} |
-            | init     | ${icon('${{ steps.init.outcome }}')} |
-            | validate | ${icon('${{ steps.validate.outcome }}')} |
-            | plan     | ${icon('${{ steps.plan.outcome }}')} |
-            | opa      | ${icon('${{ steps.opa.outcome }}')} |
-            <details><summary>📋 Plan output</summary>
-
-            \`\`\`hcl
-            ${plan}
-            \`\`\`
-            </details>`
-            });
-
       - name: Terraform apply
         id: apply
         if: needs.setup.outputs.action == 'apply'
@@ -398,12 +330,10 @@ jobs:
       - name: Job summary
         if: always()
         run: |
-          ACTION="${{ needs.setup.outputs.action }}"
-          ENV="${{ needs.setup.outputs.env }}"
-          echo "### 🌐 GCP \`$ENV\` — \`$ACTION\`" >> $GITHUB_STEP_SUMMARY
+          echo "### GCP ${{ needs.setup.outputs.env }} - ${{ needs.setup.outputs.action }}" >> $GITHUB_STEP_SUMMARY
           echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Env | \`$ENV\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Action | \`$ACTION\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Actor | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Env | ${{ needs.setup.outputs.env }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Action | ${{ needs.setup.outputs.action }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Actor | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
