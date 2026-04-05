@@ -108,15 +108,14 @@ module "aks" {
 }
 
 module "acr" {
-  source                         = "../../modules/acr"
-  environment                    = local.env
-  location                       = var.location
-  location_short                 = local.location_short
-  resource_group_name            = var.resource_group_name
-  sku                            = local.cfg.acr_sku
-  aks_kubelet_identity_object_id = module.aks.kubelet_identity_object_id
-  enable_aks_pull_role           = false # set true after first apply when AKS exists
-  tags                           = local.tags
+  source              = "../../modules/acr"
+  environment         = local.env
+  location            = var.location
+  location_short      = local.location_short
+  resource_group_name = var.resource_group_name
+  sku                 = local.cfg.acr_sku
+  tags                = local.tags
+  # NOTE: AcrPull role assignment removed — KodeKloud blocks role assignments (403)
 }
 
 module "load_balancer" {
@@ -137,9 +136,8 @@ module "keyvault" {
   resource_group_name = var.resource_group_name
   sku                 = "standard"
   soft_delete_days    = 7
-  aks_principal_id    = module.aks.principal_id
-  enable_aks_kv_role  = false # set true after first apply when AKS exists
   tags                = local.tags
+  # NOTE: Key Vault role assignments removed — KodeKloud blocks role assignments (403)
 }
 
 module "storage_account" {
