@@ -23,9 +23,12 @@ resource "azurerm_kubernetes_cluster" "this" {
   }
 
   network_profile {
-    network_plugin    = "azure"
-    load_balancer_sku = "standard"
-    outbound_type     = "loadBalancer"
+    network_plugin     = "azure"
+    load_balancer_sku  = "standard"
+    outbound_type      = "loadBalancer"
+    # Must not overlap with VNet (10.0.0.0/16) or subnets (10.0.1-3.0/24)
+    service_cidr       = "10.1.0.0/16"
+    dns_service_ip     = "10.1.0.10"
   }
 
   # KodeKloud policy: disable all add-ons including container insights
