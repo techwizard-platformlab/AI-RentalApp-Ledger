@@ -126,6 +126,25 @@ jobs:
             sleep 10
           done
 
+      # ── Register GitHub repo credentials with ArgoCD ───────────────────────
+      # Creates a Kubernetes secret with ArgoCD's repository label so ArgoCD
+      # can pull manifests from the private GitOps repo without CLI interaction.
+      # Requires secret: ARGOCD_GITHUB_PAT (repo read scope is sufficient)
+      - name: Register GitOps repo credentials
+        if: github.event.inputs.action != 'uninstall'
+        run: |
+          kubectl create secret generic argocd-repo-ai-rentalapp-ledger \
+            --namespace "${{ env.NAMESPACE_ARGOCD }}" \
+            --from-literal=type=git \
+            --from-literal=url=https://github.com/Ramprasath26/AI-RentalApp-Ledger \
+            --from-literal=username=Ramprasath26 \
+            --from-literal=password="${{ secrets.ARGOCD_GITHUB_PAT }}" \
+            --dry-run=client -o yaml \
+          | kubectl label --local -f - \
+              argocd.argoproj.io/secret-type=repository \
+              -o yaml \
+          | kubectl apply -f -
+
       # ── Apply AppProject ────────────────────────────────────────────────────
       - name: Apply ArgoCD AppProject
         if: github.event.inputs.action != 'uninstall'
@@ -180,7 +199,8 @@ jobs:
           echo "| ArgoCD Password | ${{ steps.argocd_pass.outputs.password }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "### Next steps" >> "$GITHUB_STEP_SUMMARY"
-          echo "1. Open http://${{ steps.argocd_ip.outputs.ip }} in your browser" >> "$GITHUB_STEP_SUMMARY"
+          echo "1. Open https://${{ steps.argocd_ip.outputs.ip }} in your browser (accept cert warning)" >> "$GITHUB_STEP_SUMMARY"
           echo "2. Login with admin / password above" >> "$GITHUB_STEP_SUMMARY"
-          echo "3. Run the CI Build workflow to push the first Docker image" >> "$GITHUB_STEP_SUMMARY"
-          echo "4. ArgoCD will auto-sync and deploy the app" >> "$GITHUB_STEP_SUMMARY"
+          echo "3. GitOps repo is already registered — app should show Synced" >> "$GITHUB_STEP_SUMMARY"
+          echo "4. Run the CI workflow (RentalApp-Build) with registry: acr to push the first image" >> "$GITHUB_STEP_SUMMARY"
+          echo "5. ArgoCD will auto-sync and deploy the app" >> "$GITHUB_STEP_SUMMARY"
