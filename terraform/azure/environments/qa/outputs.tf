@@ -4,3 +4,5 @@ output "acr_login_server"     { value = module.acr.login_server }
 output "keyvault_uri"         { value = module.keyvault.vault_uri }
 output "lb_public_ip"         { value = module.load_balancer.public_ip_address }
 output "storage_account_name" { value = module.storage_account.name }
+output "sql_server_fqdn"      { value = module.sql_database.fqdn }
+output "sql_database_name"    { value = module.sql_database.database_name }
