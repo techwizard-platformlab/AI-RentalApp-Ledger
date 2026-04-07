@@ -6,7 +6,7 @@ resource "azurerm_kubernetes_cluster" "this" {
   resource_group_name = var.resource_group_name
   dns_prefix          = "${var.environment}-${var.location_short}-aks"
   kubernetes_version  = var.kubernetes_version
-  sku_tier            = "Standard"
+  sku_tier            = "Free"   # Standard costs $0.10/hr and triggers agentPools/write on update; Free avoids both
 
   default_node_pool {
     name                 = "system"
@@ -47,8 +47,15 @@ resource "azurerm_kubernetes_cluster" "this" {
     ignore_changes = [
       # OIDC issuer cannot be disabled once enabled — ignore drift
       oidc_issuer_enabled,
-      # kubernetes_version is managed by AKS auto-upgrade
+      # kubernetes_version is managed by AKS auto-upgrade — let Azure control it
       kubernetes_version,
+      # KodeKloud SP lacks Microsoft.ContainerService/managedClusters/agentPools/write.
+      # Any cluster PUT request (even SKU/tag changes) includes the node pool in the
+      # request body, causing a 403. Ignoring default_node_pool prevents this.
+      # To change node pool settings (vm_size, node_count etc), do it via Azure Portal.
+      default_node_pool,
+      # sku_tier drift (Free vs Standard) also triggers a node pool update — ignore it
+      sku_tier,
     ]
   }
 }

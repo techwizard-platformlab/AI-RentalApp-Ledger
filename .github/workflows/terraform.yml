@@ -172,6 +172,17 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: true
 
+      # Log in the az CLI so that null_resource local-exec provisioners
+      # (e.g. "az keyvault secret set") work without "az login" errors.
+      # ARM_* env vars authenticate the Terraform provider but NOT the az binary.
+      - name: Azure CLI login
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          client-secret:   ${{ secrets.AZURE_CLIENT_SECRET }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
       - name: Terraform fmt check
         id: fmt
         run: terraform fmt -check -recursive ../../..
