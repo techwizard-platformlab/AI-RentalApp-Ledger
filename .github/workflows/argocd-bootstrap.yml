@@ -75,6 +75,60 @@ jobs:
           echo "login_server=$ACR_SERVER" >> "$GITHUB_OUTPUT"
           echo "ACR login server: $ACR_SERVER"
 
+      # ── Patch kustomize overlay with real ACR server + push to git ──────────
+      # Replaces ACR_LOGIN_SERVER placeholder in k8s/overlays/dev/kustomization.yaml
+      # so ArgoCD can resolve the full image reference without needing Image Updater
+      # to do the first pull. The PAT needs repo write scope.
+      - name: Patch ACR image in kustomize overlay
+        if: github.event.inputs.action != 'uninstall'
+        run: |
+          ACR_SERVER="${{ steps.acr.outputs.login_server }}"
+          sed -i "s|ACR_LOGIN_SERVER|${ACR_SERVER}|g" \
+            k8s/overlays/dev/kustomization.yaml
+
+          git config user.email "argocd-bootstrap@github-actions"
+          git config user.name "ArgoCD Bootstrap"
+          git add k8s/overlays/dev/kustomization.yaml
+          git diff --cached --quiet && echo "No ACR change needed" && exit 0
+          git commit -m "ci: set ACR server ${ACR_SERVER} in dev overlay"
+          git push \
+            https://Ramprasath26:${{ secrets.ARGOCD_GITHUB_PAT }}@github.com/Ramprasath26/AI-RentalApp-Ledger.git \
+            HEAD:main
+
+      # ── Create ACR imagePullSecret in app namespace ─────────────────────────
+      - name: Create ACR imagePullSecret
+        if: github.event.inputs.action != 'uninstall'
+        run: |
+          kubectl create namespace "${{ env.NAMESPACE_APP }}" --dry-run=client -o yaml | kubectl apply -f -
+
+          ACR_SERVER="${{ steps.acr.outputs.login_server }}"
+          ACR_PASSWORD=$(az acr credential show \
+            --name "${{ secrets.ACR_NAME }}" \
+            --query "passwords[0].value" -o tsv)
+
+          kubectl create secret docker-registry acr-pull-secret \
+            --namespace "${{ env.NAMESPACE_APP }}" \
+            --docker-server="${ACR_SERVER}" \
+            --docker-username="${{ secrets.ACR_NAME }}" \
+            --docker-password="${ACR_PASSWORD}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      # ── Create placeholder app secrets (prevents pod CrashLoopBackOff) ──────
+      # These contain non-sensitive defaults. Replace with Key Vault refs in prod.
+      - name: Create app secrets
+        if: github.event.inputs.action != 'uninstall'
+        run: |
+          NS="${{ env.NAMESPACE_APP }}"
+          for SVC in api-gateway rental-service ledger-service notification-service; do
+            kubectl create secret generic "${SVC}-secret" \
+              --namespace "$NS" \
+              --from-literal=SECRET_KEY="${{ secrets.DJANGO_SECRET_KEY }}" \
+              --from-literal=DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+              --from-literal=DB_NAME="rental_db" \
+              --from-literal=DB_USER="rental_user" \
+              --dry-run=client -o yaml | kubectl apply -f -
+          done
+
       # ── Install / Upgrade ArgoCD via Helm ──────────────────────────────────
       - name: Add Argo Helm repo
         if: github.event.inputs.action == 'install' || github.event.inputs.action == 'upgrade'
@@ -159,12 +213,6 @@ jobs:
           sed "s|ACR_LOGIN_SERVER|${ACR_SERVER}|g" \
             gitops/apps/app-${{ github.event.inputs.environment }}.yaml \
             | kubectl apply -f -
-
-      # ── Create app namespace ────────────────────────────────────────────────
-      - name: Create app namespace
-        if: github.event.inputs.action != 'uninstall'
-        run: |
-          kubectl create namespace "${{ env.NAMESPACE_APP }}" --dry-run=client -o yaml | kubectl apply -f -
 
       # ── Uninstall ───────────────────────────────────────────────────────────
       - name: Uninstall ArgoCD
