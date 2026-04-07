@@ -142,7 +142,7 @@ module "sql_database" {
   db_sku              = "S1"    # qa: 20 DTUs, 250 GB — handles load tests
   max_size_gb         = 10
   aks_subnet_cidr     = local.cfg.subnet_cidrs["aks"]
-  key_vault_id        = module.keyvault.id
+  key_vault_name      = module.keyvault.name
   tags                = local.tags
 
   depends_on = [module.keyvault]

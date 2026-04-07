@@ -36,5 +36,19 @@ resource "azurerm_kubernetes_cluster" "this" {
   http_application_routing_enabled = false
   # oms_agent block intentionally omitted — disables container insights per KodeKloud policy
 
+  # OIDC issuer — once enabled it cannot be disabled (Azure platform restriction).
+  # Keep true to match existing cluster state and avoid 400 OIDCIssuerFeatureCannotBeDisabled.
+  oidc_issuer_enabled      = true
+  workload_identity_enabled = false   # not needed; keep OIDC issuer only
+
   tags = var.tags
+
+  lifecycle {
+    ignore_changes = [
+      # OIDC issuer cannot be disabled once enabled — ignore drift
+      oidc_issuer_enabled,
+      # kubernetes_version is managed by AKS auto-upgrade
+      kubernetes_version,
+    ]
+  }
 }

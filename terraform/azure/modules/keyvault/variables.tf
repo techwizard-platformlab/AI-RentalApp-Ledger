@@ -25,8 +25,9 @@ variable "soft_delete_days" {
 }
 
 variable "cicd_sp_object_id" {
-  description = "Object ID of the CI/CD service principal — granted Key Vault Get+List access"
+  description = "Reserved — not used in RBAC mode (KodeKloud blocks role assignments). Kept for non-KodeKloud use."
   type        = string
+  default     = ""
 }
 
 variable "tags" {

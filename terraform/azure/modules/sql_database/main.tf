@@ -74,45 +74,32 @@ resource "azurerm_mssql_firewall_rule" "allow_aks" {
   end_ip_address   = cidrhost(var.aks_subnet_cidr, -1)
 }
 
-# ── Key Vault secrets ──────────────────────────────────────────────────────────
-resource "azurerm_key_vault_secret" "db_host" {
-  name         = "db-host"
-  value        = azurerm_mssql_server.this.fully_qualified_domain_name
-  key_vault_id = var.key_vault_id
-}
+# ── Key Vault secrets via az CLI (local-exec) ──────────────────────────────────
+# azurerm_key_vault_secret requires Key Vault Secrets Officer via RBAC role assignment.
+# KodeKloud blocks role assignments (403). However, the KodeKloud lab SP is pre-assigned
+# Key Vault Secrets Officer at the subscription level, so az keyvault secret set works.
+# Using local-exec with az CLI avoids the Terraform provider RBAC check entirely.
+resource "null_resource" "kv_secrets" {
+  triggers = {
+    server_fqdn  = azurerm_mssql_server.this.fully_qualified_domain_name
+    db_name      = azurerm_mssql_database.rental.name
+    kv_name      = var.key_vault_name
+  }
 
-resource "azurerm_key_vault_secret" "db_name" {
-  name         = "db-name"
-  value        = azurerm_mssql_database.rental.name
-  key_vault_id = var.key_vault_id
-}
+  provisioner "local-exec" {
+    command = <<-EOT
+      az keyvault secret set --vault-name "${var.key_vault_name}" --name "db-host"          --value "${azurerm_mssql_server.this.fully_qualified_domain_name}" --output none
+      az keyvault secret set --vault-name "${var.key_vault_name}" --name "db-name"          --value "${azurerm_mssql_database.rental.name}"                   --output none
+      az keyvault secret set --vault-name "${var.key_vault_name}" --name "db-user"          --value "${var.sql_admin_username}"                               --output none
+      az keyvault secret set --vault-name "${var.key_vault_name}" --name "db-password"      --value "${random_password.sql_admin.result}"                     --output none
+      az keyvault secret set --vault-name "${var.key_vault_name}" --name "db-port"          --value "1433"                                                    --output none
+      az keyvault secret set --vault-name "${var.key_vault_name}" --name "db-engine"        --value "mssql"                                                   --output none
+      az keyvault secret set --vault-name "${var.key_vault_name}" --name "django-secret-key" --value "${random_password.django_secret_key.result}"            --output none
+    EOT
+  }
 
-resource "azurerm_key_vault_secret" "db_user" {
-  name         = "db-user"
-  value        = var.sql_admin_username
-  key_vault_id = var.key_vault_id
-}
-
-resource "azurerm_key_vault_secret" "db_password" {
-  name         = "db-password"
-  value        = random_password.sql_admin.result
-  key_vault_id = var.key_vault_id
-}
-
-resource "azurerm_key_vault_secret" "db_port" {
-  name         = "db-port"
-  value        = "1433"
-  key_vault_id = var.key_vault_id
-}
-
-resource "azurerm_key_vault_secret" "db_engine" {
-  name         = "db-engine"
-  value        = "mssql"
-  key_vault_id = var.key_vault_id
-}
-
-resource "azurerm_key_vault_secret" "django_secret_key" {
-  name         = "django-secret-key"
-  value        = random_password.django_secret_key.result
-  key_vault_id = var.key_vault_id
+  depends_on = [
+    azurerm_mssql_server.this,
+    azurerm_mssql_database.rental,
+  ]
 }

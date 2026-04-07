@@ -49,8 +49,8 @@ variable "aks_subnet_cidr" {
   type        = string
 }
 
-variable "key_vault_id" {
-  description = "Resource ID of the Key Vault where secrets will be stored"
+variable "key_vault_name" {
+  description = "Name of the Key Vault (used with az CLI local-exec to avoid RBAC role assignment requirement)"
   type        = string
 }
 

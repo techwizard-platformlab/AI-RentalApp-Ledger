@@ -167,7 +167,7 @@ module "sql_database" {
   db_sku              = "Basic"   # dev: 5 DTUs, 2 GB — cheapest tier
   max_size_gb         = 2
   aks_subnet_cidr     = local.cfg.subnet_cidrs["aks"]
-  key_vault_id        = module.keyvault.id
+  key_vault_name      = module.keyvault.name
   tags                = local.tags
 
   depends_on = [module.keyvault]

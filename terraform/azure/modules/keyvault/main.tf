@@ -1,9 +1,13 @@
 data "azurerm_client_config" "current" {}
 
-# Key Vault — standard SKU, access-policy mode (NOT RBAC).
-# KodeKloud blocks Microsoft.Authorization/roleAssignments, so RBAC-based
-# Key Vault access (rbac_authorization_enabled = true) cannot be used.
-# Access policies are Key Vault–native and do NOT require role assignments.
+# Key Vault — standard SKU.
+# KodeKloud NOTE: The permission model (RBAC vs access policy) CANNOT be changed
+# once the Key Vault is created — the platform blocks it with InsufficientPermissions.
+# The existing dev-eus-kv was created with rbac_authorization_enabled=true (RBAC mode).
+# We keep rbac_authorization_enabled=true to match the existing resource and avoid a
+# 400 error. Access policies are therefore not available; secrets must be written
+# by the Terraform SP which is granted Key Vault Secrets Officer via the KodeKloud
+# pre-assigned role, or manually via Azure Portal / az CLI.
 resource "azurerm_key_vault" "this" {
   name                       = "${var.environment}-${var.location_short}-kv"
   location                   = var.location
@@ -13,30 +17,19 @@ resource "azurerm_key_vault" "this" {
   soft_delete_retention_days = var.soft_delete_days
   purge_protection_enabled   = false
 
-  # Use classic access policies — avoids role assignment dependency
-  rbac_authorization_enabled = false
+  # Keep RBAC mode — matches existing cluster; cannot be toggled after creation.
+  rbac_authorization_enabled = true
 
   tags = var.tags
+
+  lifecycle {
+    # Prevent Terraform from toggling permission model — causes 400 InsufficientPermissions
+    ignore_changes = [rbac_authorization_enabled]
+  }
 }
 
-# ── Access policy: Terraform service principal ─────────────────────────────────
-# Grants full secret CRUD so Terraform can write DB credentials and app secrets.
-resource "azurerm_key_vault_access_policy" "terraform_sp" {
-  key_vault_id = azurerm_key_vault.this.id
-  tenant_id    = data.azurerm_client_config.current.tenant_id
-  object_id    = data.azurerm_client_config.current.object_id
-
-  secret_permissions = [
-    "Get", "List", "Set", "Delete", "Recover", "Backup", "Restore", "Purge"
-  ]
-}
-
-# ── Access policy: CI/CD service principal (bootstrap workflow reads secrets) ──
-# Same SP used for Azure login in GitHub Actions — needs Get + List only.
-resource "azurerm_key_vault_access_policy" "cicd_sp" {
-  key_vault_id = azurerm_key_vault.this.id
-  tenant_id    = data.azurerm_client_config.current.tenant_id
-  object_id    = var.cicd_sp_object_id
-
-  secret_permissions = ["Get", "List"]
-}
+# NOTE: azurerm_key_vault_access_policy resources are NOT used here because:
+# 1. The Key Vault is in RBAC mode (access policies require non-RBAC mode)
+# 2. KodeKloud blocks Microsoft.Authorization/roleAssignments
+# Secrets are written by the CI/CD SP directly via az keyvault secret set
+# (works if the SP has Key Vault Secrets Officer role in the KodeKloud pre-assignment).
