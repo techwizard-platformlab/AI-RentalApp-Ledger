@@ -3,7 +3,7 @@
 # Single node (e2-standard-2) keeps within KodeKloud 7 vCPU quota.
 resource "google_container_cluster" "this" {
   name     = "${var.environment}-${var.region_short}-gke"
-  location = var.region   # regional cluster for HA; use zone for single-node dev cost saving
+  location = var.cluster_location   # zone (e.g. us-central1-a) for dev/qa single-node; region for prod HA
   project  = var.project_id
 
   # Remove default node pool so we can define our own with granular settings
@@ -77,14 +77,16 @@ resource "google_container_cluster" "this" {
 resource "google_container_node_pool" "primary" {
   name       = "${var.environment}-${var.region_short}-nodepool"
   cluster    = google_container_cluster.this.name
-  location   = var.region
+  location   = var.cluster_location   # must match cluster location
   project    = var.project_id
-  node_count = var.node_count  # 1 in dev to stay within KodeKloud 7 vCPU quota
+  node_count = var.node_count  # 1 in dev (zonal) = exactly 1 node = 2 vCPU within KodeKloud quota
 
   node_config {
-    machine_type = var.machine_type   # e2-standard-2 (KodeKloud E2/N2 series only)
-    disk_size_gb = var.disk_size_gb   # max 50 GB per KodeKloud disk limit
-    disk_type    = "pd-standard"      # standard persistent disk — cheapest option
+    machine_type    = var.machine_type   # e2-standard-2 (KodeKloud E2/N2 series only)
+    disk_size_gb    = var.disk_size_gb   # max 50 GB per KodeKloud disk limit
+    disk_type       = "pd-standard"      # standard persistent disk — cheapest option
+    # Attach the least-privilege SA — without this GKE defaults to the broad Compute SA
+    service_account = google_service_account.gke_nodes.email
 
     # Use Workload Identity on nodes
     workload_metadata_config {
@@ -114,6 +116,14 @@ resource "google_container_node_pool" "primary" {
     max_surge       = 1
     max_unavailable = 0
   }
+
+  # Wait for IAM bindings on the node SA to propagate before creating nodes
+  depends_on = [
+    google_service_account.gke_nodes,
+    google_project_iam_member.gke_log_writer,
+    google_project_iam_member.gke_metric_writer,
+    google_project_iam_member.gke_monitoring_viewer,
+  ]
 }
 
 # Service account for GKE nodes (least-privilege — no Editor role)

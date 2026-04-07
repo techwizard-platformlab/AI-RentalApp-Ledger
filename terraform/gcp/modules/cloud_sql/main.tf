@@ -17,6 +17,15 @@ resource "google_project_service" "servicenetworking" {
   disable_on_destroy = false
 }
 
+# Secret Manager API — must be enabled before creating secrets in this module.
+# The secret_manager module also enables this but runs in parallel; explicit
+# enablement here guarantees the API is up before cloud_sql secrets are created.
+resource "google_project_service" "secretmanager" {
+  project            = var.project_id
+  service            = "secretmanager.googleapis.com"
+  disable_on_destroy = false
+}
+
 # Random password for DB admin
 resource "random_password" "db_admin" {
   length           = 32
@@ -35,17 +44,19 @@ resource "random_password" "django_secret_key" {
 }
 
 # ── VPC Peering for private IP (GKE → Cloud SQL) ──────────────────────────────
+# google_compute_global_address and google_service_networking_connection both
+# require the full network self_link URL, not the short resource ID.
 resource "google_compute_global_address" "private_ip_range" {
   name          = "${var.environment}-sql-private-ip"
   project       = var.project_id
   purpose       = "VPC_PEERING"
   address_type  = "INTERNAL"
   prefix_length = 16
-  network       = var.vpc_network_id
+  network       = var.vpc_network_self_link
 }
 
 resource "google_service_networking_connection" "private_vpc_connection" {
-  network                 = var.vpc_network_id
+  network                 = var.vpc_network_self_link
   service                 = "servicenetworking.googleapis.com"
   reserved_peering_ranges = [google_compute_global_address.private_ip_range.name]
 
@@ -117,8 +128,11 @@ resource "google_sql_user" "app_user" {
 resource "google_secret_manager_secret" "db_host" {
   secret_id = "${var.environment}-db-host"
   project   = var.project_id
-  replication { auto {} }
-  labels = var.labels
+  replication {
+    auto {}
+  }
+  labels     = var.labels
+  depends_on = [google_project_service.secretmanager]
 }
 
 resource "google_secret_manager_secret_version" "db_host" {
@@ -129,8 +143,11 @@ resource "google_secret_manager_secret_version" "db_host" {
 resource "google_secret_manager_secret" "db_name" {
   secret_id = "${var.environment}-db-name"
   project   = var.project_id
-  replication { auto {} }
-  labels = var.labels
+  replication {
+    auto {}
+  }
+  labels     = var.labels
+  depends_on = [google_project_service.secretmanager]
 }
 
 resource "google_secret_manager_secret_version" "db_name" {
@@ -141,8 +158,11 @@ resource "google_secret_manager_secret_version" "db_name" {
 resource "google_secret_manager_secret" "db_user" {
   secret_id = "${var.environment}-db-user"
   project   = var.project_id
-  replication { auto {} }
-  labels = var.labels
+  replication {
+    auto {}
+  }
+  labels     = var.labels
+  depends_on = [google_project_service.secretmanager]
 }
 
 resource "google_secret_manager_secret_version" "db_user" {
@@ -153,8 +173,11 @@ resource "google_secret_manager_secret_version" "db_user" {
 resource "google_secret_manager_secret" "db_password" {
   secret_id = "${var.environment}-db-password"
   project   = var.project_id
-  replication { auto {} }
-  labels = var.labels
+  replication {
+    auto {}
+  }
+  labels     = var.labels
+  depends_on = [google_project_service.secretmanager]
 }
 
 resource "google_secret_manager_secret_version" "db_password" {
@@ -165,8 +188,11 @@ resource "google_secret_manager_secret_version" "db_password" {
 resource "google_secret_manager_secret" "django_secret_key" {
   secret_id = "${var.environment}-django-secret-key"
   project   = var.project_id
-  replication { auto {} }
-  labels = var.labels
+  replication {
+    auto {}
+  }
+  labels     = var.labels
+  depends_on = [google_project_service.secretmanager]
 }
 
 resource "google_secret_manager_secret_version" "django_secret_key" {

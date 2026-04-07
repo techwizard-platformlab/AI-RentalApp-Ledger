@@ -22,11 +22,12 @@ resource "google_project_service" "sts" {
 }
 
 # Workload Identity Pool — logical container for external identity providers
+# ID is prefixed with environment so dev and qa pools can coexist in the same project.
 resource "google_iam_workload_identity_pool" "github" {
-  workload_identity_pool_id = "github-actions-pool"
+  workload_identity_pool_id = "${var.environment}-github-actions-pool"
   project                   = var.project_id
-  display_name              = "GitHub Actions Pool"
-  description               = "Workload Identity Pool for GitHub Actions OIDC"
+  display_name              = "GitHub Actions Pool (${var.environment})"
+  description               = "Workload Identity Pool for GitHub Actions OIDC — ${var.environment}"
 
   depends_on = [google_project_service.sts]
 }
@@ -34,9 +35,9 @@ resource "google_iam_workload_identity_pool" "github" {
 # OIDC Provider — maps GitHub JWT claims to Google attributes
 resource "google_iam_workload_identity_pool_provider" "github_oidc" {
   workload_identity_pool_id          = google_iam_workload_identity_pool.github.workload_identity_pool_id
-  workload_identity_pool_provider_id = "github-oidc"
+  workload_identity_pool_provider_id = "${var.environment}-github-oidc"
   project                            = var.project_id
-  display_name                       = "GitHub OIDC"
+  display_name                       = "GitHub OIDC (${var.environment})"
 
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"
@@ -56,6 +57,7 @@ resource "google_iam_workload_identity_pool_provider" "github_oidc" {
 
 # Service Account for Terraform CI/CD pipeline
 # Security note: roles/editor is broad — restrict to specific roles in prod.
+# account_id max length is 28 chars; "${var.environment}-terraform-ci-sa" = up to 19 chars — safe
 resource "google_service_account" "terraform_ci" {
   account_id   = "${var.environment}-terraform-ci-sa"
   display_name = "Terraform CI SA — ${var.environment}"

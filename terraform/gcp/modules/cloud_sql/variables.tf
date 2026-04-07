@@ -19,7 +19,12 @@ variable "region_short" {
 }
 
 variable "vpc_network_id" {
-  description = "VPC network self_link for private IP peering"
+  description = "VPC network resource ID (projects/…/global/networks/…)"
+  type        = string
+}
+
+variable "vpc_network_self_link" {
+  description = "VPC network self_link (full URL) — required by google_compute_global_address and google_service_networking_connection for VPC peering"
   type        = string
 }
 
