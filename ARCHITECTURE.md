@@ -58,7 +58,8 @@ The project is split into two repositories with clearly separated concerns:
 │  PostgreSQL models              │    │  ArgoCD configuration                │
 │  CI: lint → test → Docker push  │    │  AI tools (RAG, anomaly, K8s-assist) │
 │                                 │    │  Monitoring (Prometheus / Grafana)   │
-│  Pushes image → ACR + DockerHub │    │  Notification system (Discord)       │
+│  Pushes image → ACR / DockerHub │    │  Notification system (Discord)       │
+│  / Google AR (selectable)       │    │                                      │
 └─────────────────────────────────┘    │  BDD/QA tests                        │
                                        │  OPA + Kyverno policies              │
                                        └─────────────────────────────────────┘
@@ -487,7 +488,7 @@ RentalApp-Build CI (GitHub Actions)
   1. Pylint + Bandit + Django checks
   2. pytest + coverage
   3. SonarQube scan
-  4. Docker build → push to ACR + DockerHub
+  4. Docker build → push to selected registry (ACR / DockerHub / Google AR)
         │
         ▼
 ArgoCD Image Updater (polls ACR)
@@ -638,6 +639,8 @@ Internet
 
 ```
 ci.yml (workflow_dispatch)
+  Input: registry = dockerhub (default) | acr | gcr | all
+
   Job 1: lint-and-security
     ├── actions/checkout
     ├── actions/setup-python@3.12
@@ -648,25 +651,42 @@ ci.yml (workflow_dispatch)
     └── pytest --cov (coverage.xml)
 
   Job 2: sonarqube (needs: lint-and-security)
-    └── SonarSource/sonarqube-scan-action@v6
+    └── SonarSource/sonarqube-scan-action@v6 (non-blocking)
 
   Job 3: image-meta (needs: sonarqube)
-    └── compute short SHA + branch tag
+    └── compute short_sha (8 chars) + tags_suffix (branch-sha)
 
-  Job 4: push-dockerhub (parallel)
+  Job 4: push-dockerhub  [if registry == dockerhub | all]
+    ├── docker/build-push-action@v6 (linux/amd64 + linux/arm64)
+    └── Push: :latest  :branch-sha
+
+  Job 5: push-acr  [if registry == acr | all]
+    ├── az login --service-principal → az acr login
     ├── docker/build-push-action@v6
-    └── Push: ramprasath91/ai-rentalapp-ledger:latest + :sha-XXXXXXXX
+    ├── Push: :latest  :sha  :branch-sha
+    ├── cosign sign (keyless OIDC — id-token: write)
+    └── acr purge — keep last 5 versioned tags + prune untagged
 
-  Job 5: push-acr (parallel with Job 4)
-    ├── az login --service-principal
-    ├── az acr login
-    ├── docker/build-push-action@v6
-    ├── Push: <acr>.azurecr.io/rental-app-ledger:latest + :sha-XXXXXXXX
-    └── cosign sign (keyless OIDC signing)
+  Job 6: push-gcr  [if registry == gcr | all]
+    ├── google-github-actions/auth (OIDC)
+    ├── gcloud auth configure-docker <region>-docker.pkg.dev
+    ├── docker/build-push-action@v6 (linux/amd64 + linux/arm64)
+    ├── Push: :latest  :sha  :branch-sha
+    └── cosign sign (keyless OIDC — id-token: write)
 
-  Job 6: summary
-    └── Print image tags to GitHub Step Summary
+  Job 7: summary (always)
+    └── Print per-registry status table to GitHub Step Summary
 ```
+
+**Tag lifecycle (ACR):**
+
+| Tag type | Pattern | Max kept |
+|----------|---------|----------|
+| Short-SHA | `[0-9a-f]{8}` | 5 |
+| Branch-SHA | `.*-[0-9a-f]{8}` | 5 |
+| `latest` | exact | always (never purged) |
+| `buildcache` | exact | always (build layer cache) |
+| Untagged (cosign sigs, etc.) | — | purged after 1 day |
 
 ### AI-RentalApp-Ledger Workflows
 
@@ -789,6 +809,10 @@ ci.yml (workflow_dispatch)
 | `DOCKERHUB_TOKEN` | App | Docker Hub access token |
 | `SONAR_TOKEN` | App | SonarCloud project token |
 | `SONAR_HOST_URL` | App | `https://sonarcloud.io` |
+| `GCP_PROJECT_ID` | App | GCP project ID (for Google AR pushes) |
+| `GCP_SERVICE_ACCOUNT` | App | GCP service account email (OIDC) |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | App | GCP workload identity provider resource name |
+| `GCR_REGION` | App | GAR region (e.g. `us-central1`) |
 | `DISCORD_WEBHOOK_URL` | Platform | Discord channel webhook |
 
 ---
@@ -823,7 +847,9 @@ ci.yml (workflow_dispatch)
 |---|---|
 | Terraform | Infrastructure as Code (Azure + GCP) |
 | Azure AKS | Managed Kubernetes |
-| Azure ACR | Container registry |
+| Azure ACR | Container registry (primary, AKS pulls) |
+| Google Artifact Registry | Container registry (optional, GKE pulls) |
+| Docker Hub | Container registry (public backup / default CI push) |
 | Azure Key Vault | Secrets management |
 | Azure Storage | Blob storage, Terraform state |
 | ArgoCD | GitOps continuous delivery |
