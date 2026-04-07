@@ -24,9 +24,7 @@ provider "azurerm" {
       recover_soft_deleted_key_vaults = true
     }
   }
-  # Auth via ARM_* env vars — subscription_id required in v4
   subscription_id = var.subscription_id
-  # KodeKloud: SP does not have permission to register resource providers
   resource_provider_registrations = "none"
 }
 
