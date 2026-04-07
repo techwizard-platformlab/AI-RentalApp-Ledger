@@ -20,10 +20,19 @@ on:
         default: "install"
         type: choice
         options:
-          - install        # Full install: ArgoCD + AppProject + Application
+          - install        # Full install: ArgoCD + PostgreSQL + AppProject + Application
           - upgrade        # Helm upgrade only (keep ArgoCD apps)
           - apply-apps     # Apply AppProject + Application only (ArgoCD already running)
           - uninstall      # Remove ArgoCD namespace entirely
+
+      postgres_mode:
+        description: "PostgreSQL source (azure=Flexible Server in KV, helm=in-cluster Bitnami)"
+        required: false
+        default: "helm"
+        type: choice
+        options:
+          - helm    # Deploy PostgreSQL inside AKS via Helm (KodeKloud compatible)
+          - azure   # Pull credentials from Azure Key Vault (requires Azure PostgreSQL)
 
 permissions:
   contents: read
@@ -113,42 +122,106 @@ jobs:
             --docker-password="${ACR_PASSWORD}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      # ── Pull secrets from Azure Key Vault ──────────────────────────────────
-      # All sensitive values are stored in Key Vault by Terraform (postgresql module).
-      # The CI/CD SP has Get+List access via Key Vault access policy (no role assignment needed).
-      - name: Fetch secrets from Key Vault
-        if: github.event.inputs.action != 'uninstall'
-        id: kv
+      # ── Option A: Deploy PostgreSQL via Helm inside AKS (KodeKloud default) ──
+      # Bitnami PostgreSQL chart — no Azure resource provider needed.
+      # Chosen when postgres_mode == 'helm' (default).
+      - name: Deploy PostgreSQL via Helm (in-cluster)
+        if: |
+          github.event.inputs.action != 'uninstall' &&
+          (github.event.inputs.postgres_mode == 'helm' || github.event.inputs.postgres_mode == '')
+        id: pg_helm
+        run: |
+          NS="${{ env.NAMESPACE_APP }}"
+          DB_PASSWORD=$(openssl rand -base64 32 | tr -d '/+=')
+          DJANGO_SECRET_KEY=$(openssl rand -base64 64 | tr -d '/+=')
+
+          # Store generated passwords in Key Vault for reference
+          KV_NAME=$(az keyvault list \
+            --resource-group "${{ secrets.TF_BACKEND_RG }}" \
+            --query "[0].name" -o tsv 2>/dev/null || echo "")
+
+          if [ -n "$KV_NAME" ]; then
+            az keyvault secret set --vault-name "$KV_NAME" --name "db-password"      --value "$DB_PASSWORD"      --output none
+            az keyvault secret set --vault-name "$KV_NAME" --name "django-secret-key" --value "$DJANGO_SECRET_KEY" --output none
+          fi
+
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo update
+
+          helm upgrade --install postgresql bitnami/postgresql \
+            --namespace "$NS" \
+            --values gitops/helm/postgresql/values-dev.yaml \
+            --set auth.password="$DB_PASSWORD" \
+            --set auth.postgresPassword="$DB_PASSWORD" \
+            --timeout 5m \
+            --wait
+
+          # Outputs for secret creation step
+          echo "db_host=postgresql.$NS.svc.cluster.local" >> "$GITHUB_OUTPUT"
+          echo "db_name=rental_db"                        >> "$GITHUB_OUTPUT"
+          echo "db_user=rentaladmin"                      >> "$GITHUB_OUTPUT"
+          echo "db_password=$DB_PASSWORD"                 >> "$GITHUB_OUTPUT"
+          echo "db_port=5432"                             >> "$GITHUB_OUTPUT"
+          echo "django_secret_key=$DJANGO_SECRET_KEY"     >> "$GITHUB_OUTPUT"
+
+      # ── Option B: Pull secrets from Azure Key Vault (Azure PostgreSQL) ──────
+      # Used when postgres_mode == 'azure' and Azure PostgreSQL Flexible Server
+      # has been provisioned by Terraform.
+      - name: Fetch secrets from Key Vault (Azure PostgreSQL)
+        if: |
+          github.event.inputs.action != 'uninstall' &&
+          github.event.inputs.postgres_mode == 'azure'
+        id: pg_kv
         run: |
           KV_NAME=$(az keyvault list \
             --resource-group "${{ secrets.TF_BACKEND_RG }}" \
             --query "[0].name" -o tsv)
-          echo "kv_name=$KV_NAME" >> "$GITHUB_OUTPUT"
 
           fetch() { az keyvault secret show --vault-name "$KV_NAME" --name "$1" --query value -o tsv; }
 
-          echo "db_host=$(fetch db-host)"             >> "$GITHUB_OUTPUT"
-          echo "db_name=$(fetch db-name)"             >> "$GITHUB_OUTPUT"
-          echo "db_user=$(fetch db-user)"             >> "$GITHUB_OUTPUT"
-          echo "db_password=$(fetch db-password)"     >> "$GITHUB_OUTPUT"
-          echo "db_port=$(fetch db-port)"             >> "$GITHUB_OUTPUT"
+          echo "db_host=$(fetch db-host)"                     >> "$GITHUB_OUTPUT"
+          echo "db_name=$(fetch db-name)"                     >> "$GITHUB_OUTPUT"
+          echo "db_user=$(fetch db-user)"                     >> "$GITHUB_OUTPUT"
+          echo "db_password=$(fetch db-password)"             >> "$GITHUB_OUTPUT"
+          echo "db_port=$(fetch db-port)"                     >> "$GITHUB_OUTPUT"
           echo "django_secret_key=$(fetch django-secret-key)" >> "$GITHUB_OUTPUT"
 
-      # ── Create app secrets from Key Vault values ────────────────────────────
-      - name: Create app secrets from Key Vault
+      # ── Create K8s app secrets (both modes write to same secret names) ──────
+      - name: Create app secrets
         if: github.event.inputs.action != 'uninstall'
         run: |
           NS="${{ env.NAMESPACE_APP }}"
+          MODE="${{ github.event.inputs.postgres_mode }}"
+          MODE="${MODE:-helm}"
+
+          if [ "$MODE" = "helm" ]; then
+            DB_HOST="${{ steps.pg_helm.outputs.db_host }}"
+            DB_NAME="${{ steps.pg_helm.outputs.db_name }}"
+            DB_USER="${{ steps.pg_helm.outputs.db_user }}"
+            DB_PASS="${{ steps.pg_helm.outputs.db_password }}"
+            DB_PORT="${{ steps.pg_helm.outputs.db_port }}"
+            SECRET_KEY="${{ steps.pg_helm.outputs.django_secret_key }}"
+            SSLMODE="disable"   # in-cluster PostgreSQL, no TLS needed
+          else
+            DB_HOST="${{ steps.pg_kv.outputs.db_host }}"
+            DB_NAME="${{ steps.pg_kv.outputs.db_name }}"
+            DB_USER="${{ steps.pg_kv.outputs.db_user }}"
+            DB_PASS="${{ steps.pg_kv.outputs.db_password }}"
+            DB_PORT="${{ steps.pg_kv.outputs.db_port }}"
+            SECRET_KEY="${{ steps.pg_kv.outputs.django_secret_key }}"
+            SSLMODE="require"   # Azure PostgreSQL requires SSL
+          fi
+
           for SVC in api-gateway rental-service ledger-service notification-service; do
             kubectl create secret generic "${SVC}-secret" \
               --namespace "$NS" \
-              --from-literal=SECRET_KEY="${{ steps.kv.outputs.django_secret_key }}" \
-              --from-literal=DB_HOST="${{ steps.kv.outputs.db_host }}" \
-              --from-literal=DB_NAME="${{ steps.kv.outputs.db_name }}" \
-              --from-literal=DB_USER="${{ steps.kv.outputs.db_user }}" \
-              --from-literal=DB_PASSWORD="${{ steps.kv.outputs.db_password }}" \
-              --from-literal=DB_PORT="${{ steps.kv.outputs.db_port }}" \
-              --from-literal=DB_SSLMODE="require" \
+              --from-literal=SECRET_KEY="$SECRET_KEY" \
+              --from-literal=DB_HOST="$DB_HOST" \
+              --from-literal=DB_NAME="$DB_NAME" \
+              --from-literal=DB_USER="$DB_USER" \
+              --from-literal=DB_PASSWORD="$DB_PASS" \
+              --from-literal=DB_PORT="$DB_PORT" \
+              --from-literal=DB_SSLMODE="$SSLMODE" \
               --dry-run=client -o yaml | kubectl apply -f -
           done
 
