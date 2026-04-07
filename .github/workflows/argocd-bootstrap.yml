@@ -113,19 +113,42 @@ jobs:
             --docker-password="${ACR_PASSWORD}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      # ── Create placeholder app secrets (prevents pod CrashLoopBackOff) ──────
-      # These contain non-sensitive defaults. Replace with Key Vault refs in prod.
-      - name: Create app secrets
+      # ── Pull secrets from Azure Key Vault ──────────────────────────────────
+      # All sensitive values are stored in Key Vault by Terraform (postgresql module).
+      # The CI/CD SP has Get+List access via Key Vault access policy (no role assignment needed).
+      - name: Fetch secrets from Key Vault
+        if: github.event.inputs.action != 'uninstall'
+        id: kv
+        run: |
+          KV_NAME=$(az keyvault list \
+            --resource-group "${{ secrets.TF_BACKEND_RG }}" \
+            --query "[0].name" -o tsv)
+          echo "kv_name=$KV_NAME" >> "$GITHUB_OUTPUT"
+
+          fetch() { az keyvault secret show --vault-name "$KV_NAME" --name "$1" --query value -o tsv; }
+
+          echo "db_host=$(fetch db-host)"             >> "$GITHUB_OUTPUT"
+          echo "db_name=$(fetch db-name)"             >> "$GITHUB_OUTPUT"
+          echo "db_user=$(fetch db-user)"             >> "$GITHUB_OUTPUT"
+          echo "db_password=$(fetch db-password)"     >> "$GITHUB_OUTPUT"
+          echo "db_port=$(fetch db-port)"             >> "$GITHUB_OUTPUT"
+          echo "django_secret_key=$(fetch django-secret-key)" >> "$GITHUB_OUTPUT"
+
+      # ── Create app secrets from Key Vault values ────────────────────────────
+      - name: Create app secrets from Key Vault
         if: github.event.inputs.action != 'uninstall'
         run: |
           NS="${{ env.NAMESPACE_APP }}"
           for SVC in api-gateway rental-service ledger-service notification-service; do
             kubectl create secret generic "${SVC}-secret" \
               --namespace "$NS" \
-              --from-literal=SECRET_KEY="${{ secrets.DJANGO_SECRET_KEY }}" \
-              --from-literal=DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
-              --from-literal=DB_NAME="rental_db" \
-              --from-literal=DB_USER="rental_user" \
+              --from-literal=SECRET_KEY="${{ steps.kv.outputs.django_secret_key }}" \
+              --from-literal=DB_HOST="${{ steps.kv.outputs.db_host }}" \
+              --from-literal=DB_NAME="${{ steps.kv.outputs.db_name }}" \
+              --from-literal=DB_USER="${{ steps.kv.outputs.db_user }}" \
+              --from-literal=DB_PASSWORD="${{ steps.kv.outputs.db_password }}" \
+              --from-literal=DB_PORT="${{ steps.kv.outputs.db_port }}" \
+              --from-literal=DB_SSLMODE="require" \
               --dry-run=client -o yaml | kubectl apply -f -
           done
 

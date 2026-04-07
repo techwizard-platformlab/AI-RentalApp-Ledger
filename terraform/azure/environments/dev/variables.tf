@@ -29,3 +29,9 @@ variable "subscription_id" {
   type        = string
   sensitive   = true
 }
+
+variable "cicd_sp_object_id" {
+  description = "Object ID of the CI/CD service principal — injected via TF_VAR_cicd_sp_object_id (GitHub Secret: AZURE_SP_OBJECT_ID)"
+  type        = string
+  sensitive   = true
+}

@@ -136,8 +136,22 @@ module "keyvault" {
   resource_group_name = var.resource_group_name
   sku                 = "standard"
   soft_delete_days    = 7
+  cicd_sp_object_id   = var.cicd_sp_object_id
   tags                = local.tags
-  # NOTE: Key Vault role assignments removed — KodeKloud blocks role assignments (403)
+  # Access-policy mode — no role assignments needed (KodeKloud compatible)
+}
+
+module "postgresql" {
+  source              = "../../modules/postgresql"
+  environment         = local.env
+  location            = var.location
+  location_short      = local.location_short
+  resource_group_name = var.resource_group_name
+  aks_subnet_cidr     = local.cfg.subnet_cidrs["aks"]
+  key_vault_id        = module.keyvault.id
+  tags                = local.tags
+
+  depends_on = [module.keyvault]
 }
 
 module "storage_account" {

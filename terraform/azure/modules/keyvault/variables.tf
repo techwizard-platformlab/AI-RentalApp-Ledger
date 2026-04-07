@@ -24,6 +24,11 @@ variable "soft_delete_days" {
   default = 7
 }
 
+variable "cicd_sp_object_id" {
+  description = "Object ID of the CI/CD service principal — granted Key Vault Get+List access"
+  type        = string
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
