@@ -148,12 +148,30 @@ module "keyvault" {
   # Access-policy mode — no role assignments needed (KodeKloud compatible)
 }
 
-module "postgresql" {
-  source              = "../../modules/postgresql"
+# NOTE: PostgreSQL Flexible Server is blocked on KodeKloud.
+# Uncomment below when running on a full Azure subscription.
+#
+# module "postgresql" {
+#   source              = "../../modules/postgresql"
+#   environment         = local.env
+#   location            = var.location
+#   location_short      = local.location_short
+#   resource_group_name = var.resource_group_name
+#   aks_subnet_cidr     = local.cfg.subnet_cidrs["aks"]
+#   key_vault_id        = module.keyvault.id
+#   tags                = local.tags
+#   depends_on          = [module.keyvault]
+# }
+
+# Azure SQL Database — KodeKloud allowed (S1 for QA load capacity)
+module "sql_database" {
+  source              = "../../modules/sql_database"
   environment         = local.env
   location            = var.location
   location_short      = local.location_short
   resource_group_name = var.resource_group_name
+  db_sku              = "S1"    # qa: 20 DTUs, 250 GB — handles load tests
+  max_size_gb         = 10
   aks_subnet_cidr     = local.cfg.subnet_cidrs["aks"]
   key_vault_id        = module.keyvault.id
   tags                = local.tags

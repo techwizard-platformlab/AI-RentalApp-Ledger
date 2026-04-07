@@ -25,14 +25,15 @@ on:
           - apply-apps     # Apply AppProject + Application only (ArgoCD already running)
           - uninstall      # Remove ArgoCD namespace entirely
 
-      postgres_mode:
-        description: "PostgreSQL source (azure=Flexible Server in KV, helm=in-cluster Bitnami)"
+      db_mode:
+        description: "Database backend to use"
         required: false
-        default: "helm"
+        default: "azure-sql"
         type: choice
         options:
-          - helm    # Deploy PostgreSQL inside AKS via Helm (KodeKloud compatible)
-          - azure   # Pull credentials from Azure Key Vault (requires Azure PostgreSQL)
+          - azure-sql   # Azure SQL Database Basic/S-tier (KodeKloud allowed) — pulls creds from Key Vault
+          - helm-pg     # In-cluster PostgreSQL via Bitnami Helm chart (no Azure DB needed)
+          - azure-pg    # Azure PostgreSQL Flexible Server (full Azure subscription only)
 
 permissions:
   contents: read
@@ -122,13 +123,13 @@ jobs:
             --docker-password="${ACR_PASSWORD}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      # ── Option A: Deploy PostgreSQL via Helm inside AKS (KodeKloud default) ──
+      # ── Option A: Deploy PostgreSQL via Helm inside AKS ──────────────────────
       # Bitnami PostgreSQL chart — no Azure resource provider needed.
-      # Chosen when postgres_mode == 'helm' (default).
+      # Chosen when db_mode == 'helm-pg'.
       - name: Deploy PostgreSQL via Helm (in-cluster)
         if: |
           github.event.inputs.action != 'uninstall' &&
-          (github.event.inputs.postgres_mode == 'helm' || github.event.inputs.postgres_mode == '')
+          github.event.inputs.db_mode == 'helm-pg'
         id: pg_helm
         run: |
           NS="${{ env.NAMESPACE_APP }}"
@@ -164,13 +165,13 @@ jobs:
           echo "db_port=5432"                             >> "$GITHUB_OUTPUT"
           echo "django_secret_key=$DJANGO_SECRET_KEY"     >> "$GITHUB_OUTPUT"
 
-      # ── Option B: Pull secrets from Azure Key Vault (Azure PostgreSQL) ──────
-      # Used when postgres_mode == 'azure' and Azure PostgreSQL Flexible Server
-      # has been provisioned by Terraform.
-      - name: Fetch secrets from Key Vault (Azure PostgreSQL)
+      # ── Option B: Pull secrets from Key Vault (Azure SQL or Azure PostgreSQL) ─
+      # Used when db_mode == 'azure-sql' (default) or 'azure-pg'.
+      # Terraform writes all secrets to Key Vault during infrastructure provisioning.
+      - name: Fetch secrets from Key Vault
         if: |
           github.event.inputs.action != 'uninstall' &&
-          github.event.inputs.postgres_mode == 'azure'
+          (github.event.inputs.db_mode == 'azure-sql' || github.event.inputs.db_mode == 'azure-pg' || github.event.inputs.db_mode == '')
         id: pg_kv
         run: |
           KV_NAME=$(az keyvault list \
@@ -186,42 +187,55 @@ jobs:
           echo "db_port=$(fetch db-port)"                     >> "$GITHUB_OUTPUT"
           echo "django_secret_key=$(fetch django-secret-key)" >> "$GITHUB_OUTPUT"
 
-      # ── Create K8s app secrets (both modes write to same secret names) ──────
+      # ── Create K8s app secrets (all db_modes write same secret names) ────────
       - name: Create app secrets
         if: github.event.inputs.action != 'uninstall'
         run: |
           NS="${{ env.NAMESPACE_APP }}"
-          MODE="${{ github.event.inputs.postgres_mode }}"
-          MODE="${MODE:-helm}"
+          MODE="${{ github.event.inputs.db_mode }}"
+          MODE="${MODE:-azure-sql}"
 
-          if [ "$MODE" = "helm" ]; then
+          if [ "$MODE" = "helm-pg" ]; then
+            DB_ENGINE="django.db.backends.postgresql"
             DB_HOST="${{ steps.pg_helm.outputs.db_host }}"
             DB_NAME="${{ steps.pg_helm.outputs.db_name }}"
             DB_USER="${{ steps.pg_helm.outputs.db_user }}"
             DB_PASS="${{ steps.pg_helm.outputs.db_password }}"
             DB_PORT="${{ steps.pg_helm.outputs.db_port }}"
             SECRET_KEY="${{ steps.pg_helm.outputs.django_secret_key }}"
-            SSLMODE="disable"   # in-cluster PostgreSQL, no TLS needed
-          else
+            DB_SSLMODE="disable"
+          elif [ "$MODE" = "azure-pg" ]; then
+            DB_ENGINE="django.db.backends.postgresql"
             DB_HOST="${{ steps.pg_kv.outputs.db_host }}"
             DB_NAME="${{ steps.pg_kv.outputs.db_name }}"
             DB_USER="${{ steps.pg_kv.outputs.db_user }}"
             DB_PASS="${{ steps.pg_kv.outputs.db_password }}"
             DB_PORT="${{ steps.pg_kv.outputs.db_port }}"
             SECRET_KEY="${{ steps.pg_kv.outputs.django_secret_key }}"
-            SSLMODE="require"   # Azure PostgreSQL requires SSL
+            DB_SSLMODE="require"
+          else
+            # azure-sql (default) — Azure SQL Database (SQL Server/MSSQL)
+            DB_ENGINE="mssql"
+            DB_HOST="${{ steps.pg_kv.outputs.db_host }}"
+            DB_NAME="${{ steps.pg_kv.outputs.db_name }}"
+            DB_USER="${{ steps.pg_kv.outputs.db_user }}"
+            DB_PASS="${{ steps.pg_kv.outputs.db_password }}"
+            DB_PORT="1433"
+            SECRET_KEY="${{ steps.pg_kv.outputs.django_secret_key }}"
+            DB_SSLMODE="require"
           fi
 
           for SVC in api-gateway rental-service ledger-service notification-service; do
             kubectl create secret generic "${SVC}-secret" \
               --namespace "$NS" \
               --from-literal=SECRET_KEY="$SECRET_KEY" \
+              --from-literal=DB_ENGINE="$DB_ENGINE" \
               --from-literal=DB_HOST="$DB_HOST" \
               --from-literal=DB_NAME="$DB_NAME" \
               --from-literal=DB_USER="$DB_USER" \
               --from-literal=DB_PASSWORD="$DB_PASS" \
               --from-literal=DB_PORT="$DB_PORT" \
-              --from-literal=DB_SSLMODE="$SSLMODE" \
+              --from-literal=DB_SSLMODE="$DB_SSLMODE" \
               --dry-run=client -o yaml | kubectl apply -f -
           done
 
