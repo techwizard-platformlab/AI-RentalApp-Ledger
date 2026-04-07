@@ -73,13 +73,29 @@ module "artifact_registry" {
   labels              = local.labels
 }
 
-# --- Secrets ------------------------------------------------------------------
+# --- Database -----------------------------------------------------------------
+module "cloud_sql" {
+  source       = "../../modules/cloud_sql"
+  project_id   = var.project_id
+  environment  = local.env
+  region       = local.region
+  region_short = local.region_short
+
+  vpc_network_id      = module.vpc.network_id
+  db_tier             = "db-f1-micro"   # smallest tier — dev only
+  gke_service_account = module.gke.node_service_account_email
+  labels              = local.labels
+
+  depends_on = [module.vpc]
+}
+
+# --- Secrets (non-DB) ---------------------------------------------------------
 module "secret_manager" {
   source       = "../../modules/secret_manager"
   project_id   = var.project_id
   environment  = local.env
 
-  secret_names        = ["db-password", "acr-token", "discord-webhook"]
+  secret_names        = ["acr-token", "discord-webhook"]
   gke_service_account = module.gke.node_service_account_email
   labels              = local.labels
 }
