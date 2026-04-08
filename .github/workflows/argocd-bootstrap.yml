@@ -36,7 +36,7 @@ on:
           - azure-pg    # Azure PostgreSQL Flexible Server (full Azure subscription only)
 
 permissions:
-  contents: read
+  contents: write   # required to push the ACR patch commit back to the repo
 
 concurrency:
   group: argocd-${{ github.event.inputs.environment }}
@@ -93,17 +93,24 @@ jobs:
         if: github.event.inputs.action != 'uninstall'
         run: |
           ACR_SERVER="${{ steps.acr.outputs.login_server }}"
-          sed -i "s|ACR_LOGIN_SERVER|${ACR_SERVER}|g" \
-            k8s/overlays/dev/kustomization.yaml
+          # Replace either:
+          #   • the placeholder "ACR_LOGIN_SERVER" (first run / after git reset)
+          #   • any existing ACR URL "*.azurecr.io" (KodeKloud env recreated → new ACR name)
+          # This way re-running bootstrap always patches to the current ACR, no manual edits.
+          # Delimiter is # (not |) to avoid clash with | used for regex alternation in the pattern.
+          sed -i -E "s#(ACR_LOGIN_SERVER|[a-z0-9]+\.azurecr\.io)#${ACR_SERVER}#g" \
+            k8s/overlays/${{ github.event.inputs.environment }}/kustomization.yaml
 
           git config user.email "argocd-bootstrap@github-actions"
           git config user.name "ArgoCD Bootstrap"
-          git add k8s/overlays/dev/kustomization.yaml
+          git add k8s/overlays/${{ github.event.inputs.environment }}/kustomization.yaml
           git diff --cached --quiet && echo "No ACR change needed" && exit 0
           git commit -m "ci: set ACR server ${ACR_SERVER} in dev overlay"
+          # Use GITHUB_TOKEN (auto-provided, no secret needed) with contents: write permission.
+          # Push to the branch this workflow was triggered from — never hardcode main.
           git push \
-            https://Ramprasath26:${{ secrets.ARGOCD_GITHUB_PAT }}@github.com/Ramprasath26/AI-RentalApp-Ledger.git \
-            HEAD:main
+            https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git \
+            HEAD:${{ github.ref_name }}
 
       # ── Create ACR imagePullSecret in app namespace ─────────────────────────
       - name: Create ACR imagePullSecret
@@ -112,14 +119,19 @@ jobs:
           kubectl create namespace "${{ env.NAMESPACE_APP }}" --dry-run=client -o yaml | kubectl apply -f -
 
           ACR_SERVER="${{ steps.acr.outputs.login_server }}"
+          # Derive ACR name from the login server (e.g. deveusacrjek7wu.azurecr.io → deveusacrjek7wu)
+          # so no ACR_NAME secret is needed.
+          ACR_NAME=$(echo "$ACR_SERVER" | cut -d'.' -f1)
+          # Admin user is disabled by default — enable it so credential show works.
+          az acr update --name "$ACR_NAME" --admin-enabled true --output none
           ACR_PASSWORD=$(az acr credential show \
-            --name "${{ secrets.ACR_NAME }}" \
+            --name "$ACR_NAME" \
             --query "passwords[0].value" -o tsv)
 
           kubectl create secret docker-registry acr-pull-secret \
             --namespace "${{ env.NAMESPACE_APP }}" \
             --docker-server="${ACR_SERVER}" \
-            --docker-username="${{ secrets.ACR_NAME }}" \
+            --docker-username="${ACR_NAME}" \
             --docker-password="${ACR_PASSWORD}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
@@ -251,7 +263,8 @@ jobs:
         run: |
           kubectl create namespace "${{ env.NAMESPACE_ARGOCD }}" --dry-run=client -o yaml | kubectl apply -f -
 
-          helm install argocd argo/argo-cd \
+          # upgrade --install is idempotent — safe to re-run if install was interrupted
+          helm upgrade --install argocd argo/argo-cd \
             --namespace "${{ env.NAMESPACE_ARGOCD }}" \
             --version "${{ env.ARGOCD_VERSION }}" \
             --values gitops/argocd/install-values.yaml \
@@ -289,6 +302,10 @@ jobs:
             echo "Attempt $i/30 — waiting 10s..."
             sleep 10
           done
+          if [ -z "$IP" ]; then
+            echo "::error::ArgoCD LoadBalancer did not get an external IP after 5 minutes"
+            exit 1
+          fi
 
       # ── Register GitHub repo credentials with ArgoCD ───────────────────────
       # Creates a Kubernetes secret with ArgoCD's repository label so ArgoCD
@@ -297,16 +314,16 @@ jobs:
       - name: Register GitOps repo credentials
         if: github.event.inputs.action != 'uninstall'
         run: |
+          # Use jq to inject the ArgoCD label — more reliable than kubectl label --local pipe.
+          # jq is pre-installed on all GitHub Actions ubuntu runners.
           kubectl create secret generic argocd-repo-ai-rentalapp-ledger \
             --namespace "${{ env.NAMESPACE_ARGOCD }}" \
             --from-literal=type=git \
             --from-literal=url=https://github.com/Ramprasath26/AI-RentalApp-Ledger \
             --from-literal=username=Ramprasath26 \
             --from-literal=password="${{ secrets.ARGOCD_GITHUB_PAT }}" \
-            --dry-run=client -o yaml \
-          | kubectl label --local -f - \
-              argocd.argoproj.io/secret-type=repository \
-              -o yaml \
+            --dry-run=client -o json \
+          | jq '.metadata.labels["argocd.argoproj.io/secret-type"] = "repository"' \
           | kubectl apply -f -
 
       # ── Apply AppProject ────────────────────────────────────────────────────
