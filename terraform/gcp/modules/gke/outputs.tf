@@ -6,5 +6,5 @@ output "workload_identity_pool"    { value = "${var.project_id}.svc.id.goog" }
 
 output "kubeconfig_command" {
   description = "Run this command to configure kubectl after apply"
-  value       = "gcloud container clusters get-credentials ${google_container_cluster.this.name} --region ${var.region} --project ${var.project_id}"
+  value       = "gcloud container clusters get-credentials ${google_container_cluster.this.name} --zone ${var.cluster_location} --project ${var.project_id}"
 }

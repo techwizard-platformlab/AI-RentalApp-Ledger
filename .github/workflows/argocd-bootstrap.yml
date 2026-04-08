@@ -20,10 +20,20 @@ on:
         default: "install"
         type: choice
         options:
-          - install        # Full install: ArgoCD + AppProject + Application
+          - install        # Full install: ArgoCD + PostgreSQL + AppProject + Application
           - upgrade        # Helm upgrade only (keep ArgoCD apps)
           - apply-apps     # Apply AppProject + Application only (ArgoCD already running)
           - uninstall      # Remove ArgoCD namespace entirely
+
+      db_mode:
+        description: "Database backend to use"
+        required: false
+        default: "azure-sql"
+        type: choice
+        options:
+          - azure-sql   # Azure SQL Database Basic/S-tier (KodeKloud allowed) — pulls creds from Key Vault
+          - helm-pg     # In-cluster PostgreSQL via Bitnami Helm chart (no Azure DB needed)
+          - azure-pg    # Azure PostgreSQL Flexible Server (full Azure subscription only)
 
 permissions:
   contents: read
@@ -74,6 +84,160 @@ jobs:
             --query "[0].loginServer" -o tsv)
           echo "login_server=$ACR_SERVER" >> "$GITHUB_OUTPUT"
           echo "ACR login server: $ACR_SERVER"
+
+      # ── Patch kustomize overlay with real ACR server + push to git ──────────
+      # Replaces ACR_LOGIN_SERVER placeholder in k8s/overlays/dev/kustomization.yaml
+      # so ArgoCD can resolve the full image reference without needing Image Updater
+      # to do the first pull. The PAT needs repo write scope.
+      - name: Patch ACR image in kustomize overlay
+        if: github.event.inputs.action != 'uninstall'
+        run: |
+          ACR_SERVER="${{ steps.acr.outputs.login_server }}"
+          sed -i "s|ACR_LOGIN_SERVER|${ACR_SERVER}|g" \
+            k8s/overlays/dev/kustomization.yaml
+
+          git config user.email "argocd-bootstrap@github-actions"
+          git config user.name "ArgoCD Bootstrap"
+          git add k8s/overlays/dev/kustomization.yaml
+          git diff --cached --quiet && echo "No ACR change needed" && exit 0
+          git commit -m "ci: set ACR server ${ACR_SERVER} in dev overlay"
+          git push \
+            https://Ramprasath26:${{ secrets.ARGOCD_GITHUB_PAT }}@github.com/Ramprasath26/AI-RentalApp-Ledger.git \
+            HEAD:main
+
+      # ── Create ACR imagePullSecret in app namespace ─────────────────────────
+      - name: Create ACR imagePullSecret
+        if: github.event.inputs.action != 'uninstall'
+        run: |
+          kubectl create namespace "${{ env.NAMESPACE_APP }}" --dry-run=client -o yaml | kubectl apply -f -
+
+          ACR_SERVER="${{ steps.acr.outputs.login_server }}"
+          ACR_PASSWORD=$(az acr credential show \
+            --name "${{ secrets.ACR_NAME }}" \
+            --query "passwords[0].value" -o tsv)
+
+          kubectl create secret docker-registry acr-pull-secret \
+            --namespace "${{ env.NAMESPACE_APP }}" \
+            --docker-server="${ACR_SERVER}" \
+            --docker-username="${{ secrets.ACR_NAME }}" \
+            --docker-password="${ACR_PASSWORD}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      # ── Option A: Deploy PostgreSQL via Helm inside AKS ──────────────────────
+      # Bitnami PostgreSQL chart — no Azure resource provider needed.
+      # Chosen when db_mode == 'helm-pg'.
+      - name: Deploy PostgreSQL via Helm (in-cluster)
+        if: |
+          github.event.inputs.action != 'uninstall' &&
+          github.event.inputs.db_mode == 'helm-pg'
+        id: pg_helm
+        run: |
+          NS="${{ env.NAMESPACE_APP }}"
+          DB_PASSWORD=$(openssl rand -base64 32 | tr -d '/+=')
+          DJANGO_SECRET_KEY=$(openssl rand -base64 64 | tr -d '/+=')
+
+          # Store generated passwords in Key Vault for reference
+          KV_NAME=$(az keyvault list \
+            --resource-group "${{ secrets.TF_BACKEND_RG }}" \
+            --query "[0].name" -o tsv 2>/dev/null || echo "")
+
+          if [ -n "$KV_NAME" ]; then
+            az keyvault secret set --vault-name "$KV_NAME" --name "db-password"      --value "$DB_PASSWORD"      --output none
+            az keyvault secret set --vault-name "$KV_NAME" --name "django-secret-key" --value "$DJANGO_SECRET_KEY" --output none
+          fi
+
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo update
+
+          helm upgrade --install postgresql bitnami/postgresql \
+            --namespace "$NS" \
+            --values gitops/helm/postgresql/values-dev.yaml \
+            --set auth.password="$DB_PASSWORD" \
+            --set auth.postgresPassword="$DB_PASSWORD" \
+            --timeout 5m \
+            --wait
+
+          # Outputs for secret creation step
+          echo "db_host=postgresql.$NS.svc.cluster.local" >> "$GITHUB_OUTPUT"
+          echo "db_name=rental_db"                        >> "$GITHUB_OUTPUT"
+          echo "db_user=rentaladmin"                      >> "$GITHUB_OUTPUT"
+          echo "db_password=$DB_PASSWORD"                 >> "$GITHUB_OUTPUT"
+          echo "db_port=5432"                             >> "$GITHUB_OUTPUT"
+          echo "django_secret_key=$DJANGO_SECRET_KEY"     >> "$GITHUB_OUTPUT"
+
+      # ── Option B: Pull secrets from Key Vault (Azure SQL or Azure PostgreSQL) ─
+      # Used when db_mode == 'azure-sql' (default) or 'azure-pg'.
+      # Terraform writes all secrets to Key Vault during infrastructure provisioning.
+      - name: Fetch secrets from Key Vault
+        if: |
+          github.event.inputs.action != 'uninstall' &&
+          (github.event.inputs.db_mode == 'azure-sql' || github.event.inputs.db_mode == 'azure-pg' || github.event.inputs.db_mode == '')
+        id: pg_kv
+        run: |
+          KV_NAME=$(az keyvault list \
+            --resource-group "${{ secrets.TF_BACKEND_RG }}" \
+            --query "[0].name" -o tsv)
+
+          fetch() { az keyvault secret show --vault-name "$KV_NAME" --name "$1" --query value -o tsv; }
+
+          echo "db_host=$(fetch db-host)"                     >> "$GITHUB_OUTPUT"
+          echo "db_name=$(fetch db-name)"                     >> "$GITHUB_OUTPUT"
+          echo "db_user=$(fetch db-user)"                     >> "$GITHUB_OUTPUT"
+          echo "db_password=$(fetch db-password)"             >> "$GITHUB_OUTPUT"
+          echo "db_port=$(fetch db-port)"                     >> "$GITHUB_OUTPUT"
+          echo "django_secret_key=$(fetch django-secret-key)" >> "$GITHUB_OUTPUT"
+
+      # ── Create K8s app secrets (all db_modes write same secret names) ────────
+      - name: Create app secrets
+        if: github.event.inputs.action != 'uninstall'
+        run: |
+          NS="${{ env.NAMESPACE_APP }}"
+          MODE="${{ github.event.inputs.db_mode }}"
+          MODE="${MODE:-azure-sql}"
+
+          if [ "$MODE" = "helm-pg" ]; then
+            DB_ENGINE="django.db.backends.postgresql"
+            DB_HOST="${{ steps.pg_helm.outputs.db_host }}"
+            DB_NAME="${{ steps.pg_helm.outputs.db_name }}"
+            DB_USER="${{ steps.pg_helm.outputs.db_user }}"
+            DB_PASS="${{ steps.pg_helm.outputs.db_password }}"
+            DB_PORT="${{ steps.pg_helm.outputs.db_port }}"
+            SECRET_KEY="${{ steps.pg_helm.outputs.django_secret_key }}"
+            DB_SSLMODE="disable"
+          elif [ "$MODE" = "azure-pg" ]; then
+            DB_ENGINE="django.db.backends.postgresql"
+            DB_HOST="${{ steps.pg_kv.outputs.db_host }}"
+            DB_NAME="${{ steps.pg_kv.outputs.db_name }}"
+            DB_USER="${{ steps.pg_kv.outputs.db_user }}"
+            DB_PASS="${{ steps.pg_kv.outputs.db_password }}"
+            DB_PORT="${{ steps.pg_kv.outputs.db_port }}"
+            SECRET_KEY="${{ steps.pg_kv.outputs.django_secret_key }}"
+            DB_SSLMODE="require"
+          else
+            # azure-sql (default) — Azure SQL Database (SQL Server/MSSQL)
+            DB_ENGINE="mssql"
+            DB_HOST="${{ steps.pg_kv.outputs.db_host }}"
+            DB_NAME="${{ steps.pg_kv.outputs.db_name }}"
+            DB_USER="${{ steps.pg_kv.outputs.db_user }}"
+            DB_PASS="${{ steps.pg_kv.outputs.db_password }}"
+            DB_PORT="1433"
+            SECRET_KEY="${{ steps.pg_kv.outputs.django_secret_key }}"
+            DB_SSLMODE="require"
+          fi
+
+          for SVC in api-gateway rental-service ledger-service notification-service; do
+            kubectl create secret generic "${SVC}-secret" \
+              --namespace "$NS" \
+              --from-literal=SECRET_KEY="$SECRET_KEY" \
+              --from-literal=DB_ENGINE="$DB_ENGINE" \
+              --from-literal=DB_HOST="$DB_HOST" \
+              --from-literal=DB_NAME="$DB_NAME" \
+              --from-literal=DB_USER="$DB_USER" \
+              --from-literal=DB_PASSWORD="$DB_PASS" \
+              --from-literal=DB_PORT="$DB_PORT" \
+              --from-literal=DB_SSLMODE="$DB_SSLMODE" \
+              --dry-run=client -o yaml | kubectl apply -f -
+          done
 
       # ── Install / Upgrade ArgoCD via Helm ──────────────────────────────────
       - name: Add Argo Helm repo
@@ -159,12 +323,6 @@ jobs:
           sed "s|ACR_LOGIN_SERVER|${ACR_SERVER}|g" \
             gitops/apps/app-${{ github.event.inputs.environment }}.yaml \
             | kubectl apply -f -
-
-      # ── Create app namespace ────────────────────────────────────────────────
-      - name: Create app namespace
-        if: github.event.inputs.action != 'uninstall'
-        run: |
-          kubectl create namespace "${{ env.NAMESPACE_APP }}" --dry-run=client -o yaml | kubectl apply -f -
 
       # ── Uninstall ───────────────────────────────────────────────────────────
       - name: Uninstall ArgoCD

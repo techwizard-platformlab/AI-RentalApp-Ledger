@@ -1,0 +1,39 @@
+# =============================================================================
+# Bitnami PostgreSQL Helm values — dev environment
+# Chart: oci://registry-1.docker.io/bitnamicharts/postgresql
+# Deployed inside AKS — no Azure resource provider needed (KodeKloud compatible)
+# =============================================================================
+
+auth:
+  database: rental_db
+  username: rentaladmin
+  # Password injected at deploy time from Key Vault via --set auth.password=...
+  # Never hardcode here — this file is committed to git
+
+primary:
+  persistence:
+    enabled: true
+    size: 8Gi
+    storageClass: ""   # use default AKS storage class (managed-csi)
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # Allow connections from rental-dev namespace only
+  initdb:
+    scripts:
+      init.sql: |
+        GRANT ALL PRIVILEGES ON DATABASE rental_db TO rentaladmin;
+
+replication:
+  enabled: false   # single instance for dev (saves resources)
+
+metrics:
+  enabled: true    # expose Prometheus metrics on :9187
+  serviceMonitor:
+    enabled: false  # enable when Prometheus Operator is installed

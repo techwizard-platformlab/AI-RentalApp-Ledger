@@ -46,6 +46,10 @@ module "gke" {
   pods_range_name      = module.vpc.pods_range_name
   services_range_name  = module.vpc.services_range_name
 
+  # Zonal cluster — same zone as dev (different cluster, same zone is fine).
+  # Regional cluster would create 3 nodes and triple cost for no benefit in qa.
+  cluster_location = "us-central1-b"   # different zone from dev (us-central1-a) for isolation
+
   master_ipv4_cidr = "172.16.1.0/28"  # non-overlapping with dev
   master_authorized_cidrs = [
     { cidr_block = "0.0.0.0/0", display_name = "all — restrict in prod" }
@@ -69,12 +73,30 @@ module "artifact_registry" {
   labels              = local.labels
 }
 
+# --- Database -----------------------------------------------------------------
+module "cloud_sql" {
+  source       = "../../modules/cloud_sql"
+  project_id   = var.project_id
+  environment  = local.env
+  region       = local.region
+  region_short = local.region_short
+
+  vpc_network_id        = module.vpc.network_id
+  vpc_network_self_link = module.vpc.network_self_link   # full URL required for VPC peering
+  db_tier               = "db-g1-small"                  # slightly larger for qa load tests
+  gke_service_account   = module.gke.node_service_account_email
+  labels                = local.labels
+
+  depends_on = [module.vpc]
+}
+
+# --- Secrets (non-DB) ---------------------------------------------------------
 module "secret_manager" {
   source       = "../../modules/secret_manager"
   project_id   = var.project_id
   environment  = local.env
 
-  secret_names        = ["db-password", "acr-token", "discord-webhook"]
+  secret_names        = ["acr-token", "discord-webhook"]
   gke_service_account = module.gke.node_service_account_email
   labels              = local.labels
 }

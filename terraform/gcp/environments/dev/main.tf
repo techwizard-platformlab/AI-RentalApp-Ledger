@@ -49,12 +49,16 @@ module "gke" {
   pods_range_name      = module.vpc.pods_range_name
   services_range_name  = module.vpc.services_range_name
 
+  # Zonal cluster — 1 zone = exactly 1 node = 2 vCPU, safely within KodeKloud 7 vCPU quota.
+  # Regional cluster (var.region) would create 1 node per zone = 3 nodes = 6 vCPU and 3x cost.
+  cluster_location = "us-central1-a"
+
   master_ipv4_cidr = "172.16.0.0/28"
   master_authorized_cidrs = [
     { cidr_block = "0.0.0.0/0", display_name = "all — restrict in prod" }
   ]
 
-  node_count   = 1              # single node: stays within 7 vCPU KodeKloud quota
+  node_count   = 1              # single node in the zone — matches KodeKloud quota
   machine_type = "e2-standard-2"
   disk_size_gb = 30
 
@@ -73,13 +77,30 @@ module "artifact_registry" {
   labels              = local.labels
 }
 
-# --- Secrets ------------------------------------------------------------------
+# --- Database -----------------------------------------------------------------
+module "cloud_sql" {
+  source       = "../../modules/cloud_sql"
+  project_id   = var.project_id
+  environment  = local.env
+  region       = local.region
+  region_short = local.region_short
+
+  vpc_network_id        = module.vpc.network_id
+  vpc_network_self_link = module.vpc.network_self_link   # full URL required for VPC peering
+  db_tier               = "db-f1-micro"                  # smallest tier — dev only
+  gke_service_account   = module.gke.node_service_account_email
+  labels                = local.labels
+
+  depends_on = [module.vpc]
+}
+
+# --- Secrets (non-DB) ---------------------------------------------------------
 module "secret_manager" {
   source       = "../../modules/secret_manager"
   project_id   = var.project_id
   environment  = local.env
 
-  secret_names        = ["db-password", "acr-token", "discord-webhook"]
+  secret_names        = ["acr-token", "discord-webhook"]
   gke_service_account = module.gke.node_service_account_email
   labels              = local.labels
 }

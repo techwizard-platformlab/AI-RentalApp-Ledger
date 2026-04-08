@@ -136,8 +136,41 @@ module "keyvault" {
   resource_group_name = var.resource_group_name
   sku                 = "standard"
   soft_delete_days    = 7
+  cicd_sp_object_id   = var.cicd_sp_object_id
   tags                = local.tags
-  # NOTE: Key Vault role assignments removed — KodeKloud blocks role assignments (403)
+  # Access-policy mode — no role assignments needed (KodeKloud compatible)
+}
+
+# NOTE: PostgreSQL Flexible Server is blocked on KodeKloud
+# (Microsoft.DBforPostgreSQL/register/action not permitted).
+# Uncomment below when running on a full Azure subscription.
+#
+# module "postgresql" {
+#   source              = "../../modules/postgresql"
+#   environment         = local.env
+#   location            = var.location
+#   location_short      = local.location_short
+#   resource_group_name = var.resource_group_name
+#   aks_subnet_cidr     = local.cfg.subnet_cidrs["aks"]
+#   key_vault_id        = module.keyvault.id
+#   tags                = local.tags
+#   depends_on          = [module.keyvault]
+# }
+
+# Azure SQL Database — KodeKloud allowed (Basic / S0–S4, Local redundancy, ≤50 GB)
+module "sql_database" {
+  source              = "../../modules/sql_database"
+  environment         = local.env
+  location            = var.location
+  location_short      = local.location_short
+  resource_group_name = var.resource_group_name
+  db_sku              = "Basic"   # dev: 5 DTUs, 2 GB — cheapest tier
+  max_size_gb         = 2
+  aks_subnet_cidr     = local.cfg.subnet_cidrs["aks"]
+  key_vault_name      = module.keyvault.name
+  tags                = local.tags
+
+  depends_on = [module.keyvault]
 }
 
 module "storage_account" {

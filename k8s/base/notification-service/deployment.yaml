@@ -34,9 +34,11 @@ spec:
         fsGroup: 1001
         seccompProfile:
           type: RuntimeDefault
+      imagePullSecrets:
+        - name: acr-pull-secret
       containers:
         - name: notification-service
-          image: "{registry}/notification-service:{tag}"
+          image: "rental-app-ledger:latest"
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8003

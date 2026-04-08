@@ -14,6 +14,10 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.0"
     }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -26,7 +30,13 @@ provider "azurerm" {
   }
   # Auth via ARM_* env vars — subscription_id required in v4
   subscription_id = var.subscription_id
-  # KodeKloud: SP does not have permission to register resource providers
+  # KodeKloud: SP cannot register providers globally — only pre-registered ones work.
+  # Required providers for this stack:
+  #   Microsoft.DBforPostgreSQL  — PostgreSQL Flexible Server
+  #   Microsoft.KeyVault         — Key Vault
+  #   Microsoft.ContainerService — AKS
+  #   Microsoft.ContainerRegistry — ACR
+  # Register manually once: az provider register --namespace Microsoft.DBforPostgreSQL
   resource_provider_registrations = "none"
 }
 

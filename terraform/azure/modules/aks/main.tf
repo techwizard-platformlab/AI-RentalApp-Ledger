@@ -6,7 +6,7 @@ resource "azurerm_kubernetes_cluster" "this" {
   resource_group_name = var.resource_group_name
   dns_prefix          = "${var.environment}-${var.location_short}-aks"
   kubernetes_version  = var.kubernetes_version
-  sku_tier            = "Standard"
+  sku_tier            = "Free"   # Standard costs $0.10/hr and triggers agentPools/write on update; Free avoids both
 
   default_node_pool {
     name                 = "system"
@@ -36,5 +36,27 @@ resource "azurerm_kubernetes_cluster" "this" {
   http_application_routing_enabled = false
   # oms_agent block intentionally omitted — disables container insights per KodeKloud policy
 
+  # OIDC issuer — once enabled it cannot be disabled (Azure platform restriction).
+  # Keep true to match existing cluster state and avoid 400 OIDCIssuerFeatureCannotBeDisabled.
+  oidc_issuer_enabled      = true
+  workload_identity_enabled = false   # not needed; keep OIDC issuer only
+
   tags = var.tags
+
+  lifecycle {
+    ignore_changes = [
+      # kubernetes_version is managed by AKS auto-upgrade — let Azure control it
+      kubernetes_version,
+      # KodeKloud SP lacks Microsoft.ContainerService/managedClusters/agentPools/write.
+      # Any cluster PUT request includes the node pool in the body → 403.
+      # Ignoring default_node_pool prevents Terraform from ever sending node pool diffs.
+      # To change node pool settings, use the Azure Portal.
+      default_node_pool,
+      # sku_tier drift also triggers a node pool update — ignore it
+      sku_tier,
+      # NOTE: oidc_issuer_enabled is intentionally NOT here.
+      # Code has true → Terraform always sends true → no 400 OIDCIssuerFeatureCannotBeDisabled.
+      # Having it in ignore_changes caused Terraform to send the old state value (false) → error.
+    ]
+  }
 }

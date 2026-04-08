@@ -55,7 +55,7 @@ The project is split into two repositories with clearly separated concerns:
 │                                 │    │                                      │
 │  Django REST API                │    │  Terraform (Azure / GCP)             │
 │  Business logic                 │    │  Kubernetes manifests (GitOps)       │
-│  PostgreSQL models              │    │  ArgoCD configuration                │
+│  Django models (SQL Server/PG)  │    │  ArgoCD configuration                │
 │  CI: lint → test → Docker push  │    │  AI tools (RAG, anomaly, K8s-assist) │
 │                                 │    │  Monitoring (Prometheus / Grafana)   │
 │  Pushes image → ACR / DockerHub │    │  Notification system (Discord)       │
@@ -436,14 +436,19 @@ All infrastructure is managed via Terraform and deployed to Azure using the Kode
 
 | Resource | Module | Purpose |
 |---|---|---|
-| AKS Cluster | `modules/aks` | Kubernetes cluster (Standard_D2s_v3 nodes) |
+| AKS Cluster | `modules/aks` | Kubernetes cluster (Standard_D2s_v3 / Standard_B2s nodes) |
 | ACR | `modules/acr` | Container registry for Docker images |
-| Virtual Network | `modules/vnet` | Private networking (10.0.0.0/16) |
+| Virtual Network | `modules/vnet` | Private networking |
 | Subnet | `modules/subnet` | AKS node subnet |
-| Key Vault | `modules/keyvault` | Secrets management (RBAC-enabled) |
+| Key Vault | `modules/keyvault` | Secrets management (access-policy mode, no role assignments) |
+| **Azure SQL Database** | `modules/sql_database` | **Primary database — Basic (dev) / S1 (qa)** |
 | Storage Account | `modules/storage_account` | Uploads, backups, Terraform state |
 | Load Balancer | `modules/load_balancer` | Public IP for external traffic |
 | Security Group | `modules/security_group` | Network access control |
+
+> **PostgreSQL note:** `modules/postgresql` exists but is commented out in all environments.
+> KodeKloud blocks `Microsoft.DBforPostgreSQL/register/action`. Uncomment when running
+> on a full Azure subscription.
 
 ### Network Design
 
@@ -459,18 +464,35 @@ K8s DNS:          10.1.0.10
 
 ```
 terraform/azure/environments/
-├── dev/   ← KodeKloud lab (1-node AKS, Basic ACR, Standard KeyVault)
-└── qa/    ← QA environment (higher resources)
+├── dev/   ← KodeKloud lab (1-node AKS, Basic ACR, Basic SQL, Standard KV)
+└── qa/    ← KodeKloud lab (1-node AKS, Basic ACR, S1 SQL, Standard KV)
 ```
+
+### Database per Environment
+
+| Environment | Engine | Module | SKU | Size | Secrets |
+|------------|--------|--------|-----|------|---------|
+| Azure dev | Azure SQL Database | `modules/sql_database` | Basic | 2 GB | Key Vault |
+| Azure qa | Azure SQL Database | `modules/sql_database` | S1 | 10 GB | Key Vault |
+| GCP dev | Cloud SQL PostgreSQL 16 | `modules/cloud_sql` | db-f1-micro | 10 GB | Secret Manager |
+| GCP qa | Cloud SQL PostgreSQL 16 | `modules/cloud_sql` | db-g1-small | 10 GB | Secret Manager |
+
+> **Why Azure SQL instead of PostgreSQL?**
+> KodeKloud only allows SQL Database tiers: Basic, S0–S4 (max 50 GB, max 2 instances,
+> Local backup redundancy only). PostgreSQL Flexible Server is not permitted
+> (`Microsoft.DBforPostgreSQL/register/action` blocked).
+> The `modules/postgresql` module is kept commented out for full Azure subscription use.
 
 ### KodeKloud Constraints
 
 > These are hard platform limits in the KodeKloud lab environment:
 
-- No `Microsoft.Authorization/roleAssignments` (403 forbidden)
+- No `Microsoft.Authorization/roleAssignments` (403 forbidden) — Key Vault uses access policies instead of RBAC
 - No new resource groups (use pre-assigned RG)
-- Only allowed VM sizes: `Standard_D2s_v3`, `Standard_K8S2_v1`, `Standard_K8S_v1`
+- Only allowed VM sizes: `Standard_D2s_v3`, `Standard_B2s`, `Standard_K8S2_v1`
 - No WAF policies, no container insights
+- No PostgreSQL Flexible Server (`Microsoft.DBforPostgreSQL/register/action` blocked)
+- SQL Database: only Basic / S0–S4, Local backup redundancy, max 50 GB, max 2 instances
 - Service Principal client secret expires each lab session — must regenerate
 - `resource_provider_registrations = "none"` required (cannot register providers)
 
@@ -627,7 +649,8 @@ Internet
 - **Dependency Review** — GitHub Dependabot on both repos
 
 ### Secrets Management
-- **Azure Key Vault** — production secrets (RBAC-enabled, soft delete)
+- **Azure Key Vault** — access-policy mode (no role assignments, KodeKloud compatible); stores DB credentials, Django secret key; CI/CD SP granted Get+List via access policy
+- **GCP Secret Manager** — stores Cloud SQL credentials + Django secret key; GKE SA granted secretAccessor role
 - **GitHub Actions Secrets** — CI/CD credentials (encrypted via PyNaCl SealedBox)
 - **bootstrap/.env** — gitignored, never committed
 
@@ -694,11 +717,36 @@ ci.yml (workflow_dispatch)
 |---|---|---|
 | `ci-build.yml` | manual | Terraform fmt, OPA lint, K8s manifest validation, Trivy FS scan |
 | `terraform.yml` | manual | Plan / apply / destroy on Azure or GCP |
-| `argocd-bootstrap.yml` | manual | Install ArgoCD on AKS, apply AppProject + Application |
+| `argocd-bootstrap.yml` | manual | Install ArgoCD, deploy DB, create K8s secrets, apply AppProject + Application |
 | `cost-check.yml` | manual | Infracost estimate + OPA cost guardrail |
 | `qa-validate.yml` | manual | BDD tests against live cluster |
 | `terraform-schedule.yml` | manual | Scheduled destroy/recreate for KodeKloud sessions |
 | `notify.yml` | workflow_call | Reusable Discord + email notification |
+
+#### `terraform.yml` inputs
+
+| Input | Options | Default | Description |
+|-------|---------|---------|-------------|
+| `target_env` | dev / qa / uat / prod | dev | Target environment |
+| `cloud` | azure / gcp / both | azure | Target cloud provider |
+| `action` | plan / apply / destroy | plan | Terraform action |
+| `confirm` | string | — | Type env name to confirm apply/destroy on non-dev |
+
+#### `argocd-bootstrap.yml` inputs
+
+| Input | Options | Default | Description |
+|-------|---------|---------|-------------|
+| `environment` | dev / qa | dev | Target environment |
+| `action` | install / upgrade / apply-apps / uninstall | install | Bootstrap action |
+| `db_mode` | **azure-sql** / helm-pg / azure-pg | **azure-sql** | Database backend |
+
+**`db_mode` options:**
+
+| Mode | When to use | DB_HOST | SSL |
+|------|------------|---------|-----|
+| `azure-sql` *(default)* | KodeKloud — Azure SQL Database Basic/S-tier | `*.database.windows.net` | require |
+| `helm-pg` | No Azure DB — PostgreSQL inside AKS via Bitnami Helm | `postgresql.<ns>.svc.cluster.local` | disable |
+| `azure-pg` | Full Azure subscription — PostgreSQL Flexible Server | `*.postgres.database.azure.com` | require |
 
 > All auto-triggers (push, pull_request, schedule) are currently commented out during testing.
 
@@ -776,12 +824,13 @@ ci.yml (workflow_dispatch)
 | `SECRET_KEY` | Yes (prod) | — | Django secret key (50+ chars) |
 | `DEBUG` | No | `False` | Debug mode |
 | `ALLOWED_HOSTS` | No | `127.0.0.1,localhost` | Comma-separated hostnames |
-| `DB_NAME` | No | — | PostgreSQL database name |
-| `DB_USER` | No | `postgres` | PostgreSQL user |
-| `DB_PASSWORD` | No | — | PostgreSQL password |
-| `DB_HOST` | No | `localhost` | PostgreSQL host |
-| `DB_PORT` | No | `5432` | PostgreSQL port |
-| `DB_SSLMODE` | No | `require` | SSL mode (disable for local tunnel) |
+| `DB_ENGINE` | No | `mssql` | Django DB backend (`mssql` for Azure SQL, `django.db.backends.postgresql` for PG) |
+| `DB_NAME` | No | `rental-db` | Database name |
+| `DB_USER` | No | `rentaladmin` | Database user |
+| `DB_PASSWORD` | No | — | Database password (from Key Vault / Secret Manager) |
+| `DB_HOST` | No | `localhost` | Database host FQDN |
+| `DB_PORT` | No | `1433` | Database port (1433 for SQL Server, 5432 for PostgreSQL) |
+| `DB_SSLMODE` | No | `require` | SSL mode (`require` for Azure SQL/PG, `disable` for in-cluster) |
 | `RUN_MIGRATIONS` | No | `false` | Auto-migrate on startup |
 | `CORS_ALLOWED_ORIGINS` | No | — | Comma-separated origin URLs |
 | `GUNICORN_WORKERS` | No | `4` | Worker process count |
@@ -828,7 +877,8 @@ ci.yml (workflow_dispatch)
 | django-cors-headers | 4.7.0 | CORS handling |
 | Gunicorn | 23.0.0 | WSGI server |
 | WhiteNoise | 6.9.0 | Static file serving |
-| psycopg | 3.2.6 | PostgreSQL driver |
+| psycopg | 3.2.6 | PostgreSQL driver (used for local dev / GCP Cloud SQL) |
+| mssql-django | 1.4+ | Azure SQL Database (SQL Server) Django backend |
 | Pillow | 11.1.0 | Image processing |
 
 ### AI / ML Layer

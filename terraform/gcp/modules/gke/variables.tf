@@ -10,6 +10,12 @@ variable "region" {
   type = string
 }
 
+variable "cluster_location" {
+  description = "Zone or region for the GKE cluster and node pool. Use a zone (e.g. us-central1-a) for single-node dev/qa to avoid creating 1 node per zone. Use a region for prod HA."
+  type        = string
+  # No default — must be set explicitly per environment to avoid accidental regional clusters.
+}
+
 variable "region_short" {
   type = string
 }

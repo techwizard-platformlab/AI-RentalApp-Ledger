@@ -24,7 +24,7 @@ resource "google_artifact_registry_repository" "this" {
     action = "DELETE"
     condition {
       tag_state  = "UNTAGGED"
-      older_than = "720h"  # delete untagged images older than 30 days
+      older_than = "2592000s"  # 30 days in seconds — GCP Duration type requires "Xs" format
     }
   }
 }
