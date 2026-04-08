@@ -2,6 +2,8 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: notification-service-hpa
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
   namespace: rental-dev
   labels:
     app: notification-service
