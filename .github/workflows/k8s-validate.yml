@@ -1,0 +1,212 @@
+name: K8s Manifest Validation
+
+# Validates kustomize overlays and ArgoCD app manifests on every change.
+# Uses kubeconform to check schemas, required fields, and deprecated APIs.
+# Runs BEFORE ArgoCD auto-sync picks up the changes — catches errors early.
+
+on:
+  push:
+    branches: [main, "feature/**", "fix/**", "hotfix/**"]
+    paths:
+      - "k8s/**"
+      - "gitops/apps/**"
+      - ".github/workflows/k8s-validate.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "k8s/**"
+      - "gitops/apps/**"
+      - ".github/workflows/k8s-validate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write   # post validation summary as PR comment
+
+jobs:
+  validate:
+    name: Validate (${{ matrix.overlay }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false   # validate all overlays even if one fails
+      matrix:
+        overlay: [dev, qa]
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      # ── Install tools ─────────────────────────────────────────────────────
+      - name: Install kustomize
+        run: |
+          KUSTOMIZE_VERSION=v5.4.1
+          curl -sSL \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz" \
+            | tar xz -C /usr/local/bin kustomize
+          kustomize version
+
+      - name: Install kubeconform
+        run: |
+          KUBECONFORM_VERSION=v0.6.7
+          curl -sSL \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | tar xz -C /usr/local/bin kubeconform
+          kubeconform -v
+
+      # ── Build kustomize overlay ───────────────────────────────────────────
+      - name: Build kustomize overlay
+        id: build
+        run: |
+          echo "Building k8s/overlays/${{ matrix.overlay }}/"
+          kustomize build k8s/overlays/${{ matrix.overlay }}/ > /tmp/manifests-${{ matrix.overlay }}.yaml
+          echo "Built $(grep -c '^---' /tmp/manifests-${{ matrix.overlay }}.yaml || echo 0) documents"
+          echo "=== Preview (first 30 lines) ==="
+          head -30 /tmp/manifests-${{ matrix.overlay }}.yaml
+
+      # ── Validate with kubeconform ─────────────────────────────────────────
+      # -strict             → reject unknown/extra fields
+      # -ignore-missing-schemas → skip CRDs (ArgoCD Application etc) without failing
+      # -kubernetes-version → validate against AKS-compatible schema version
+      # -output json        → machine-readable for PR comment parsing
+      - name: Run kubeconform
+        id: kubeconform
+        run: |
+          kubeconform \
+            -strict \
+            -ignore-missing-schemas \
+            -kubernetes-version 1.29.0 \
+            -summary \
+            -output json \
+            /tmp/manifests-${{ matrix.overlay }}.yaml \
+            | tee /tmp/kubeconform-${{ matrix.overlay }}.json
+          # Exit code from kubeconform (not tee)
+          KUBECONFORM_EXIT=${PIPESTATUS[0]}
+          echo "exit_code=$KUBECONFORM_EXIT" >> "$GITHUB_OUTPUT"
+          exit $KUBECONFORM_EXIT
+
+      # ── Print human-readable summary ──────────────────────────────────────
+      - name: Print summary
+        if: always()
+        run: |
+          echo "=== kubeconform results for ${{ matrix.overlay }} ==="
+          python3 - <<'EOF'
+          import json, sys
+
+          try:
+              with open("/tmp/kubeconform-${{ matrix.overlay }}.json") as f:
+                  data = json.load(f)
+          except Exception as e:
+              print(f"Could not parse results: {e}")
+              sys.exit(0)
+
+          summary = data.get("summary", {})
+          resources = data.get("resources", [])
+
+          print(f"Valid:   {summary.get('valid', 0)}")
+          print(f"Invalid: {summary.get('invalid', 0)}")
+          print(f"Errors:  {summary.get('errors', 0)}")
+          print(f"Skipped: {summary.get('skipped', 0)}")
+
+          errors = [r for r in resources if r.get("status") in ("invalid", "error")]
+          if errors:
+              print("\n=== Errors ===")
+              for r in errors:
+                  msg = r.get("msg", r.get("validationErrors", []))
+                  print(f"  [{r.get('status')}] {r.get('filename','')}: {r.get('kind','')}/{r.get('name','')} — {msg}")
+          EOF
+
+      # ── Write job summary ─────────────────────────────────────────────────
+      - name: Write GitHub step summary
+        if: always()
+        run: |
+          STATUS="${{ steps.kubeconform.outputs.exit_code == '0' && '✅ Passed' || '❌ Failed' }}"
+          echo "## $STATUS — kubeconform (${{ matrix.overlay }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          python3 - >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          import json
+
+          try:
+              with open("/tmp/kubeconform-${{ matrix.overlay }}.json") as f:
+                  data = json.load(f)
+          except Exception:
+              print("_No result data available_")
+              exit(0)
+
+          summary = data.get("summary", {})
+          print(f"| Valid | Invalid | Errors | Skipped |")
+          print(f"|-------|---------|--------|---------|")
+          print(f"| {summary.get('valid',0)} | {summary.get('invalid',0)} | {summary.get('errors',0)} | {summary.get('skipped',0)} |")
+          print("")
+
+          errors = [r for r in data.get("resources", []) if r.get("status") in ("invalid", "error")]
+          if errors:
+              print("### Validation Errors")
+              print("| Resource | Kind | Error |")
+              print("|----------|------|-------|")
+              for r in errors:
+                  msgs = r.get("validationErrors") or [{"message": r.get("msg", "unknown")}]
+                  for m in msgs:
+                      print(f"| `{r.get('name','')}` | {r.get('kind','')} | {m.get('message','')} |")
+          EOF
+
+  # ── Validate ArgoCD application manifests ─────────────────────────────────
+  validate-argocd-apps:
+    name: Validate ArgoCD App Manifests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Install kubeconform
+        run: |
+          KUBECONFORM_VERSION=v0.6.7
+          curl -sSL \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | tar xz -C /usr/local/bin kubeconform
+          kubeconform -v
+
+      # ArgoCD CRDs (Application, AppProject) are validated using the datreeio
+      # CRDs catalog — a community-maintained collection of CRD JSON schemas.
+      - name: Validate ArgoCD manifests
+        run: |
+          kubeconform \
+            -strict \
+            -ignore-missing-schemas \
+            -kubernetes-version 1.29.0 \
+            -summary \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            gitops/apps/appproject.yaml \
+            gitops/apps/app-dev.yaml \
+            gitops/apps/app-qa.yaml
+
+      - name: Write GitHub step summary
+        if: always()
+        run: |
+          echo "## ArgoCD App Manifests Validation" >> "$GITHUB_STEP_SUMMARY"
+          echo "Files checked:" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`gitops/apps/appproject.yaml\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`gitops/apps/app-dev.yaml\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`gitops/apps/app-qa.yaml\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Gate: all overlays must pass ─────────────────────────────────────────
+  # This job is the required status check to set on the branch protection rule.
+  # PR cannot merge unless this passes.
+  validate-gate:
+    name: Validation Gate
+    runs-on: ubuntu-latest
+    needs: [validate, validate-argocd-apps]
+    if: always()
+
+    steps:
+      - name: Check all validations passed
+        run: |
+          if [[ "${{ needs.validate.result }}" != "success" || \
+                "${{ needs.validate-argocd-apps.result }}" != "success" ]]; then
+            echo "One or more validation jobs failed."
+            echo "validate: ${{ needs.validate.result }}"
+            echo "validate-argocd-apps: ${{ needs.validate-argocd-apps.result }}"
+            exit 1
+          fi
+          echo "All K8s manifest validations passed."

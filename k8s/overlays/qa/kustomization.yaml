@@ -14,6 +14,11 @@ labels:
       environment: qa
     includeSelectors: false
 
+images:
+  - name: rental-app-ledger
+    newName: placeholder.azurecr.io/rental-app-ledger
+    newTag: latest
+
 # QA: patch replicas to 2 and HPA min to 2 for all services
 patches:
   - patch: |-
