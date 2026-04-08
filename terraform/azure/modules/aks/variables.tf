@@ -43,3 +43,15 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "appnode_vm_size" {
+  description = "VM size for the app node pool. KodeKloud allowed: Standard_D2s_v3, Standard_K8S2_v1, Standard_K8S_v1"
+  type        = string
+  default     = "Standard_D2s_v3"
+}
+
+variable "appnode_node_count" {
+  description = "Number of nodes in the app node pool."
+  type        = number
+  default     = 1
+}

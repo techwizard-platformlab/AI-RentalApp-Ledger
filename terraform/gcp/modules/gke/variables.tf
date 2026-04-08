@@ -72,3 +72,15 @@ variable "labels" {
   type    = map(string)
   default = {}
 }
+
+variable "appnode_node_count" {
+  description = "Number of nodes in the app node pool."
+  type        = number
+  default     = 1
+}
+
+variable "appnode_machine_type" {
+  description = "Machine type for the app node pool. KodeKloud quota: keep total vCPU ≤ 7 (e2-standard-2 = 2 vCPU per node)."
+  type        = string
+  default     = "e2-standard-2"
+}

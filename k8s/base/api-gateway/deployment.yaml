@@ -35,6 +35,8 @@ spec:
         fsGroup: 1001
         seccompProfile:
           type: RuntimeDefault
+      nodeSelector:
+        nodepool: appnode
       imagePullSecrets:
         - name: acr-pull-secret
       containers:

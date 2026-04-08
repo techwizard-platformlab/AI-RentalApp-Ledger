@@ -1,5 +1,6 @@
 # AKS — KodeKloud allowed VM sizes: Standard_D2s_v3, Standard_K8S2_v1, Standard_K8S_v1
-# Max agent pool: 2. Max node pool: 1. Container insights must be disabled.
+# Max agent pool: 2. Max node pool: 1 per pool. Container insights must be disabled.
+# Node pools: "system" (system components) + "appnode" (application pods) = 2 agent pools.
 resource "azurerm_kubernetes_cluster" "this" {
   name                = "${var.environment}-${var.location_short}-aks"
   location            = var.location
@@ -58,5 +59,32 @@ resource "azurerm_kubernetes_cluster" "this" {
       # Code has true → Terraform always sends true → no 400 OIDCIssuerFeatureCannotBeDisabled.
       # Having it in ignore_changes caused Terraform to send the old state value (false) → error.
     ]
+  }
+}
+
+# ── App Node Pool ──────────────────────────────────────────────────────────────
+# Dedicated "User" pool for application pods — keeps system components on "system" pool.
+# Pods target this pool via nodeSelector: nodepool=appnode
+#
+# KodeKloud note: agentPools/write is restricted. If Terraform apply fails with 403,
+# create via Portal: AKS → Node pools → Add → Name: appnode, Size: Standard_D2s_v3, Count: 1
+resource "azurerm_kubernetes_cluster_node_pool" "appnode" {
+  name                  = "appnode"
+  kubernetes_cluster_id = azurerm_kubernetes_cluster.this.id
+  vm_size               = var.appnode_vm_size
+  node_count            = var.appnode_node_count
+  vnet_subnet_id        = var.subnet_id
+  os_disk_size_gb       = var.os_disk_size_gb
+  mode                  = "User"   # User pool: application workloads only
+
+  node_labels = {
+    "nodepool" = "appnode"
+  }
+
+  tags = var.tags
+
+  lifecycle {
+    # node_count managed outside Terraform (portal/autoscaler) — ignore drift
+    ignore_changes = [node_count, orchestrator_version]
   }
 }

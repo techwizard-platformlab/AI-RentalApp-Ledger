@@ -126,6 +126,60 @@ resource "google_container_node_pool" "primary" {
   ]
 }
 
+# ── App Node Pool ──────────────────────────────────────────────────────────────
+# Dedicated pool for application pods — keeps system components on the primary pool.
+# Pods target this pool via nodeSelector: nodepool=appnode
+resource "google_container_node_pool" "appnode" {
+  name       = "appnode"
+  cluster    = google_container_cluster.this.name
+  location   = var.cluster_location
+  project    = var.project_id
+  node_count = var.appnode_node_count
+
+  node_config {
+    machine_type    = var.appnode_machine_type
+    disk_size_gb    = var.disk_size_gb
+    disk_type       = "pd-standard"
+    service_account = google_service_account.gke_nodes.email
+
+    workload_metadata_config {
+      mode = "GKE_METADATA"
+    }
+
+    oauth_scopes = [
+      "https://www.googleapis.com/auth/cloud-platform",
+    ]
+
+    labels = merge(var.labels, {
+      "nodepool" = "appnode"
+    })
+
+    tags = ["gke-node", "${var.environment}-gke", "appnode"]
+
+    shielded_instance_config {
+      enable_secure_boot          = true
+      enable_integrity_monitoring = true
+    }
+  }
+
+  management {
+    auto_repair  = true
+    auto_upgrade = true
+  }
+
+  upgrade_settings {
+    max_surge       = 1
+    max_unavailable = 0
+  }
+
+  depends_on = [
+    google_service_account.gke_nodes,
+    google_project_iam_member.gke_log_writer,
+    google_project_iam_member.gke_metric_writer,
+    google_project_iam_member.gke_monitoring_viewer,
+  ]
+}
+
 # Service account for GKE nodes (least-privilege — no Editor role)
 resource "google_service_account" "gke_nodes" {
   account_id   = "${var.environment}-gke-nodes-sa"
