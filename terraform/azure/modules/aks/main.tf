@@ -45,17 +45,18 @@ resource "azurerm_kubernetes_cluster" "this" {
 
   lifecycle {
     ignore_changes = [
-      # OIDC issuer cannot be disabled once enabled — ignore drift
-      oidc_issuer_enabled,
       # kubernetes_version is managed by AKS auto-upgrade — let Azure control it
       kubernetes_version,
       # KodeKloud SP lacks Microsoft.ContainerService/managedClusters/agentPools/write.
-      # Any cluster PUT request (even SKU/tag changes) includes the node pool in the
-      # request body, causing a 403. Ignoring default_node_pool prevents this.
-      # To change node pool settings (vm_size, node_count etc), do it via Azure Portal.
+      # Any cluster PUT request includes the node pool in the body → 403.
+      # Ignoring default_node_pool prevents Terraform from ever sending node pool diffs.
+      # To change node pool settings, use the Azure Portal.
       default_node_pool,
-      # sku_tier drift (Free vs Standard) also triggers a node pool update — ignore it
+      # sku_tier drift also triggers a node pool update — ignore it
       sku_tier,
+      # NOTE: oidc_issuer_enabled is intentionally NOT here.
+      # Code has true → Terraform always sends true → no 400 OIDCIssuerFeatureCannotBeDisabled.
+      # Having it in ignore_changes caused Terraform to send the old state value (false) → error.
     ]
   }
 }

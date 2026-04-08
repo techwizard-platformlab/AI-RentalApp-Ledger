@@ -39,7 +39,8 @@ resource "azurerm_mssql_server" "this" {
   tags = var.tags
 
   lifecycle {
-    ignore_changes = [administrator_login_password]
+    ignore_changes  = [administrator_login_password]
+    prevent_destroy = true   # data loss protection — use 'terraform state rm' to override
   }
 }
 
@@ -56,6 +57,13 @@ resource "azurerm_mssql_database" "rental" {
   storage_account_type = "Local"
 
   tags = var.tags
+
+  lifecycle {
+    # storage_account_type and max_size_gb drift between Azure API response ("LocallyRedundant")
+    # and provider value ("Local"), causing a ForceNew replace on every apply.
+    ignore_changes  = [storage_account_type, max_size_gb]
+    prevent_destroy = true   # data loss protection — use 'terraform state rm' to override
+  }
 }
 
 # ── Firewall: allow Azure services (AKS egress IPs are Azure IPs) ─────────────
