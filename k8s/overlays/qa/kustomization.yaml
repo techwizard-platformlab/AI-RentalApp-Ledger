@@ -9,8 +9,10 @@ resources:
   - ../../base/ledger-service
   - ../../base/notification-service
 
-commonLabels:
-  environment: qa
+labels:
+  - pairs:
+      environment: qa
+    includeSelectors: false
 
 # QA: patch replicas to 2 and HPA min to 2 for all services
 patches:
