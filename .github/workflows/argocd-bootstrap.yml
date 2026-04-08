@@ -93,7 +93,11 @@ jobs:
         if: github.event.inputs.action != 'uninstall'
         run: |
           ACR_SERVER="${{ steps.acr.outputs.login_server }}"
-          sed -i "s|ACR_LOGIN_SERVER|${ACR_SERVER}|g" \
+          # Replace either:
+          #   • the placeholder "ACR_LOGIN_SERVER" (first run / after git reset)
+          #   • any existing ACR URL "*.azurecr.io" (KodeKloud env recreated → new ACR name)
+          # This way re-running bootstrap always patches to the current ACR, no manual edits.
+          sed -i -E "s|(ACR_LOGIN_SERVER|[a-z0-9]+\.azurecr\.io)|${ACR_SERVER}|g" \
             k8s/overlays/dev/kustomization.yaml
 
           git config user.email "argocd-bootstrap@github-actions"
@@ -114,14 +118,17 @@ jobs:
           kubectl create namespace "${{ env.NAMESPACE_APP }}" --dry-run=client -o yaml | kubectl apply -f -
 
           ACR_SERVER="${{ steps.acr.outputs.login_server }}"
+          # Derive ACR name from the login server (e.g. deveusacrjek7wu.azurecr.io → deveusacrjek7wu)
+          # so no ACR_NAME secret is needed.
+          ACR_NAME=$(echo "$ACR_SERVER" | cut -d'.' -f1)
           ACR_PASSWORD=$(az acr credential show \
-            --name "${{ secrets.ACR_NAME }}" \
+            --name "$ACR_NAME" \
             --query "passwords[0].value" -o tsv)
 
           kubectl create secret docker-registry acr-pull-secret \
             --namespace "${{ env.NAMESPACE_APP }}" \
             --docker-server="${ACR_SERVER}" \
-            --docker-username="${{ secrets.ACR_NAME }}" \
+            --docker-username="${ACR_NAME}" \
             --docker-password="${ACR_PASSWORD}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
