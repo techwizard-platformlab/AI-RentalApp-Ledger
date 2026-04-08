@@ -14,10 +14,11 @@ labels:
       environment: dev
     includeSelectors: false
 
-# ACR_LOGIN_SERVER is a placeholder replaced by the argocd-bootstrap workflow on each deploy.
-# The workflow uses sed to substitute it with the real ACR login server URL.
-# Never commit a hardcoded *.azurecr.io URL here — always use the placeholder.
+# placeholder.azurecr.io is a syntactically valid image reference (lowercase, dots)
+# that the argocd-bootstrap workflow replaces with the real ACR login server on each deploy.
+# The sed pattern matches [a-z0-9]+\.azurecr\.io so this placeholder is always substituted.
+# Pods will be in ImagePullBackOff until bootstrap runs — that is expected.
 images:
   - name: rental-app-ledger
-    newName: ACR_LOGIN_SERVER/rental-app-ledger
+    newName: placeholder.azurecr.io/rental-app-ledger
     newTag: latest
