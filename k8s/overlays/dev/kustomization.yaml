@@ -13,9 +13,9 @@ commonLabels:
   environment: dev
 
 # Registry prefix is injected here by argocd-bootstrap workflow on each deploy.
-# ACR_LOGIN_SERVER placeholder is replaced with the real ACR URL (e.g. deveusacrabc.azurecr.io).
+# deveusacrjek7wu.azurecr.io placeholder is replaced with the real ACR URL (e.g. deveusacrabc.azurecr.io).
 # ArgoCD Image Updater then keeps the tag up to date after each CI push.
 images:
   - name: rental-app-ledger
-    newName: ACR_LOGIN_SERVER/rental-app-ledger
+    newName: deveusacrjek7wu.azurecr.io/rental-app-ledger
     newTag: latest
