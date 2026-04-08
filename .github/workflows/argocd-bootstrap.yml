@@ -36,7 +36,7 @@ on:
           - azure-pg    # Azure PostgreSQL Flexible Server (full Azure subscription only)
 
 permissions:
-  contents: read
+  contents: write   # required to push the ACR patch commit back to the repo
 
 concurrency:
   group: argocd-${{ github.event.inputs.environment }}
@@ -101,9 +101,11 @@ jobs:
           git add k8s/overlays/dev/kustomization.yaml
           git diff --cached --quiet && echo "No ACR change needed" && exit 0
           git commit -m "ci: set ACR server ${ACR_SERVER} in dev overlay"
+          # Use GITHUB_TOKEN (auto-provided, no secret needed) with contents: write permission.
+          # Push to the branch this workflow was triggered from — never hardcode main.
           git push \
-            https://Ramprasath26:${{ secrets.ARGOCD_GITHUB_PAT }}@github.com/Ramprasath26/AI-RentalApp-Ledger.git \
-            HEAD:main
+            https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git \
+            HEAD:${{ github.ref_name }}
 
       # ── Create ACR imagePullSecret in app namespace ─────────────────────────
       - name: Create ACR imagePullSecret
