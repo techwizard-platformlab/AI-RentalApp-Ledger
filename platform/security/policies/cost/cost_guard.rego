@@ -4,12 +4,14 @@ import future.keywords.if
 import future.keywords.every
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Thresholds (USD / month) — playground safety guards
+# Thresholds (USD / month)
+# Budget: $5/week (~420 INR) = $21.65/month
+# Pattern: deploy 3-4 hrs/day, destroy compute after use
 # ─────────────────────────────────────────────────────────────────────────────
-deny_threshold  := 30    # hard block
-amber_threshold := 20    # warn zone: 20-30 USD
-per_resource_warn_threshold := 10
-aks_monthly_limit := 15
+deny_threshold              := 22   # hard block  — exceeds $5/week budget
+amber_threshold             := 15   # warn zone   — approaching budget
+per_resource_warn_threshold := 8    # single resource spike warning
+aks_monthly_limit           := 18   # AKS 2 nodes × 88 hrs/month limit
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Parse infracost JSON: total cost

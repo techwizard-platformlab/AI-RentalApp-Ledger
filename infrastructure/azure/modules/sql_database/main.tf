@@ -1,6 +1,6 @@
 # =============================================================================
 # Azure SQL Database (SQL Server + Database)
-# KodeKloud allowed tiers: Basic, S0–S4 | Max size: 50 GB | Max 2 instances
+# Supported tiers: Basic, S0–S4 | Max size: 50 GB (cost constraint)
 # Backup redundancy: Local only
 #
 # dev  → Basic  (5 DTUs,  2 GB,  ~$5/month)
@@ -49,11 +49,11 @@ resource "azurerm_mssql_database" "rental" {
   name      = "rental-db"
   server_id = azurerm_mssql_server.this.id
 
-  # KodeKloud allowed SKUs — Basic for dev, S0/S1 for qa
+  # Supported SKUs — Basic for dev, S0/S1 for qa
   sku_name   = var.db_sku
   max_size_gb = var.max_size_gb
 
-  # KodeKloud only allows Local backup redundancy
+  # Local backup redundancy — sufficient for dev/qa, lower cost
   storage_account_type = "Local"
 
   tags = var.tags
@@ -84,9 +84,8 @@ resource "azurerm_mssql_firewall_rule" "allow_aks" {
 
 # ── Key Vault secrets via az CLI (local-exec) ──────────────────────────────────
 # azurerm_key_vault_secret requires Key Vault Secrets Officer via RBAC role assignment.
-# KodeKloud blocks role assignments (403). However, the KodeKloud lab SP is pre-assigned
-# Key Vault Secrets Officer at the subscription level, so az keyvault secret set works.
-# Using local-exec with az CLI avoids the Terraform provider RBAC check entirely.
+# SP may lack role assignment permissions — check IAM. Using local-exec with az CLI
+# avoids the Terraform provider RBAC check; ensure the SP has Key Vault Secrets Officer.
 resource "null_resource" "kv_secrets" {
   triggers = {
     server_fqdn  = azurerm_mssql_server.this.fully_qualified_domain_name

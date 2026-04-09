@@ -25,7 +25,7 @@ variable "soft_delete_days" {
 }
 
 variable "cicd_sp_object_id" {
-  description = "Reserved — not used in RBAC mode (KodeKloud blocks role assignments). Kept for non-KodeKloud use."
+  description = "Reserved — not used in RBAC mode (SP may lack role assignment permissions — check IAM). Kept for future use."
   type        = string
   default     = ""
 }

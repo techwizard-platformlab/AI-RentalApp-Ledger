@@ -80,7 +80,7 @@ variable "appnode_node_count" {
 }
 
 variable "appnode_machine_type" {
-  description = "Machine type for the app node pool. KodeKloud quota: keep total vCPU ≤ 7 (e2-standard-2 = 2 vCPU per node)."
+  description = "Machine type for the app node pool. Cost constraint: keep resource usage low (e2-standard-2 = 2 vCPU per node)."
   type        = string
   default     = "e2-standard-2"
 }

@@ -45,7 +45,7 @@ variable "tags" {
 }
 
 variable "appnode_vm_size" {
-  description = "VM size for the app node pool. KodeKloud allowed: Standard_D2s_v3, Standard_K8S2_v1, Standard_K8S_v1"
+  description = "VM size for the app node pool (e.g. Standard_D2s_v3, Standard_K8S2_v1, Standard_K8S_v1)"
   type        = string
   default     = "Standard_D2s_v3"
 }

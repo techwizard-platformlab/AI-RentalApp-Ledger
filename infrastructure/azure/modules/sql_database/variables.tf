@@ -25,22 +25,22 @@ variable "sql_admin_username" {
 }
 
 variable "db_sku" {
-  description = "Azure SQL Database SKU (KodeKloud: Basic | S0 | S1 | S2 | S3 | S4)"
+  description = "Azure SQL Database SKU (Basic | S0 | S1 | S2 | S3 | S4)"
   type        = string
   default     = "Basic"
   validation {
     condition     = contains(["Basic", "S0", "S1", "S2", "S3", "S4"], var.db_sku)
-    error_message = "KodeKloud only allows: Basic, S0, S1, S2, S3, S4."
+    error_message = "Allowed SKUs: Basic, S0, S1, S2, S3, S4."
   }
 }
 
 variable "max_size_gb" {
-  description = "Maximum database size in GB (KodeKloud max: 50)"
+  description = "Maximum database size in GB — cost constraint: keep disk size low"
   type        = number
   default     = 2
   validation {
     condition     = var.max_size_gb <= 50
-    error_message = "KodeKloud limits maximum database size to 50 GB."
+    error_message = "Maximum database size is 50 GB (cost constraint)."
   }
 }
 

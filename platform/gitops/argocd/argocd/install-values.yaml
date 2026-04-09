@@ -84,7 +84,7 @@ notifications:
     limits:
       cpu: 200m
       memory: 128Mi
-  # Notification triggers and templates are in gitops/apps/notification-config.yaml
+  # Notification triggers and templates are in platform/gitops/argocd/apps/notification-config.yaml
 
 # Disable unnecessary components to save resources
 dex:

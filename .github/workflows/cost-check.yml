@@ -5,7 +5,7 @@ on:
   # pull_request:
   #   branches: [main]
   #   paths:
-  #     - "terraform/**"
+  #     - "infrastructure/**"
   workflow_dispatch:
 
 permissions:
@@ -47,7 +47,7 @@ jobs:
           terraform_version: 1.5.7
 
       - name: Terraform init + plan (${{ matrix.cloud }})
-        working-directory: terraform/${{ matrix.cloud }}/environments/dev
+        working-directory: infrastructure/${{ matrix.cloud }}/environments/dev
         run: |
           terraform init
           terraform plan -out=tfplan
@@ -60,7 +60,7 @@ jobs:
           api-key: ${{ secrets.INFRACOST_API_KEY }}
 
       - name: Run Infracost breakdown
-        working-directory: terraform/${{ matrix.cloud }}/environments/dev
+        working-directory: infrastructure/${{ matrix.cloud }}/environments/dev
         run: |
           infracost breakdown \
             --path . \
@@ -77,12 +77,12 @@ jobs:
 
       - name: Run OPA cost policy
         id: opa_cost
-        working-directory: terraform/${{ matrix.cloud }}/environments/dev
+        working-directory: infrastructure/${{ matrix.cloud }}/environments/dev
         run: |
           set +e
           conftest test infracost.json \
             --namespace cost \
-            --policy ../../../../policy/cost/cost_guard.rego \
+            --policy ../../../../platform/security/policies/cost/cost_guard.rego \
             --output json > opa_cost_result.json 2>&1
           EXIT_CODE=$?
           echo "exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
@@ -100,7 +100,7 @@ jobs:
             let infracostData = {};
             try {
               infracostData = JSON.parse(
-                fs.readFileSync('terraform/' + cloud + '/environments/dev/infracost.json', 'utf8')
+                fs.readFileSync('infrastructure/' + cloud + '/environments/dev/infracost.json', 'utf8')
               );
             } catch (e) {
               console.log('Could not read infracost.json');

@@ -1,5 +1,5 @@
 # ArgoCD PostSync Hook — runs validate_deployment.sh after every sync
-# Place this in k8s/overlays/dev/ or apply directly.
+# Place this in platform/kubernetes/overlays/dev/ or apply directly.
 # ArgoCD deletes the Job after it completes (hook-delete-policy).
 apiVersion: batch/v1
 kind: Job

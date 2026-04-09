@@ -42,7 +42,7 @@ spec:
       containers:
         - name: api-gateway
           # Image pushed by RentalApp CI → ACR. Tag updated by ArgoCD Image Updater.
-          # Registry prefix is injected by kustomize images overlay (k8s/overlays/dev/kustomization.yaml)
+          # Registry prefix is injected by kustomize images overlay (platform/kubernetes/overlays/dev/kustomization.yaml)
           image: "rental-app-ledger:latest"
           imagePullPolicy: IfNotPresent
           ports:

@@ -1,5 +1,4 @@
-# AKS — KodeKloud allowed VM sizes: Standard_D2s_v3, Standard_K8S2_v1, Standard_K8S_v1
-# Max agent pool: 2. Max node pool: 1 per pool. Container insights must be disabled.
+# AKS — recommended VM sizes: Standard_D2s_v3, Standard_K8S2_v1, Standard_K8S_v1
 # Node pools: "system" (system components) + "appnode" (application pods) = 2 agent pools.
 resource "azurerm_kubernetes_cluster" "this" {
   name                = "${var.environment}-${var.location_short}-aks"
@@ -32,10 +31,10 @@ resource "azurerm_kubernetes_cluster" "this" {
     dns_service_ip     = "10.1.0.10"
   }
 
-  # KodeKloud policy: disable all add-ons including container insights
+  # Disable add-ons not needed for this deployment (reduces cost and complexity)
   azure_policy_enabled             = false
   http_application_routing_enabled = false
-  # oms_agent block intentionally omitted — disables container insights per KodeKloud policy
+  # oms_agent block intentionally omitted — disables container insights (cost saving)
 
   # OIDC issuer — once enabled it cannot be disabled (Azure platform restriction).
   # Keep true to match existing cluster state and avoid 400 OIDCIssuerFeatureCannotBeDisabled.
@@ -48,7 +47,7 @@ resource "azurerm_kubernetes_cluster" "this" {
     ignore_changes = [
       # kubernetes_version is managed by AKS auto-upgrade — let Azure control it
       kubernetes_version,
-      # KodeKloud SP lacks Microsoft.ContainerService/managedClusters/agentPools/write.
+      # SP may lack Microsoft.ContainerService/managedClusters/agentPools/write — check IAM.
       # Any cluster PUT request includes the node pool in the body → 403.
       # Ignoring default_node_pool prevents Terraform from ever sending node pool diffs.
       # To change node pool settings, use the Azure Portal.
@@ -66,8 +65,8 @@ resource "azurerm_kubernetes_cluster" "this" {
 # Dedicated "User" pool for application pods — keeps system components on "system" pool.
 # Pods target this pool via nodeSelector: nodepool=appnode
 #
-# KodeKloud note: agentPools/write is restricted. If Terraform apply fails with 403,
-# create via Portal: AKS → Node pools → Add → Name: appnode, Size: Standard_D2s_v3, Count: 1
+# Note: If Terraform apply fails with 403 on agentPools/write, check IAM permissions.
+# Alternatively create via Portal: AKS → Node pools → Add → Name: appnode, Size: Standard_D2s_v3, Count: 1
 resource "azurerm_kubernetes_cluster_node_pool" "appnode" {
   name                  = "appnode"
   kubernetes_cluster_id = azurerm_kubernetes_cluster.this.id

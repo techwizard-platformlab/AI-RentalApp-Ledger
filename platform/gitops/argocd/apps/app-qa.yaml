@@ -27,7 +27,7 @@ spec:
   source:
     repoURL: "https://github.com/{org}/rentalAppLedger"
     targetRevision: qa            # track the qa branch
-    path: k8s/overlays/qa
+    path: platform/kubernetes/overlays/qa
 
   destination:
     server: https://kubernetes.default.svc

@@ -8,10 +8,10 @@ on:
   # push:
   #   branches: [main]
   #   paths:
-  #     - "terraform/**"
-  #     - "policy/**"
-  #     - "k8s/**"
-  #     - "gitops/**"
+  #     - "infrastructure/**"
+  #     - "platform/security/policies/**"
+  #     - "platform/kubernetes/**"
+  #     - "platform/gitops/argocd/**"
   # pull_request:
   #   branches: [main]
   workflow_dispatch:
@@ -40,11 +40,11 @@ jobs:
           terraform_version: "1.5.7"
 
       - name: Terraform fmt check (Azure)
-        run: terraform fmt -check -recursive terraform/azure
+        run: terraform fmt -check -recursive infrastructure/azure
         continue-on-error: true
 
       - name: Terraform fmt check (GCP)
-        run: terraform fmt -check -recursive terraform/gcp
+        run: terraform fmt -check -recursive infrastructure/gcp
         continue-on-error: true
 
   # ─────────────────────────────────────────────────────────────────────────
@@ -66,10 +66,10 @@ jobs:
         run: opa version
 
       - name: Lint Azure policy
-        run: opa check policy/terraform/azure.rego
+        run: opa check platform/security/policies/terraform/azure.rego
 
       - name: Lint GCP policy
-        run: opa check policy/terraform/gcp.rego
+        run: opa check platform/security/policies/terraform/gcp.rego
 
   # ─────────────────────────────────────────────────────────────────────────
   # Job 3: K8s manifest validation (kubeval / kubeconform)
@@ -93,7 +93,7 @@ jobs:
             -skip HorizontalPodAutoscaler \
             -ignore-missing-schemas \
             -summary \
-            k8s/base/**/*.yaml
+            platform/kubernetes/base/**/*.yaml
 
       - name: Validate ArgoCD gitops manifests
         run: |
@@ -101,7 +101,7 @@ jobs:
             -kubernetes-version 1.29.0 \
             -ignore-missing-schemas \
             -summary \
-            gitops/apps/*.yaml
+            platform/gitops/argocd/apps/*.yaml
 
   # ─────────────────────────────────────────────────────────────────────────
   # Job 4: Security Scan (Trivy filesystem)

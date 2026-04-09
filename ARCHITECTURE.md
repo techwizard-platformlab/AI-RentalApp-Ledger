@@ -69,29 +69,45 @@ The project is split into two repositories with clearly separated concerns:
 
 ```
 AI-RentalApp-Ledger/
-├── .github/workflows/       # CI/CD pipelines (Terraform, ArgoCD, QA, notify)
-├── ai-tools/
-│   ├── k8s-assistant/       # AI-powered pod diagnostics (Ollama / Groq / Claude)
-│   └── anomaly-detector/    # Statistical anomaly detection (Z-score, IQR)
-├── bootstrap/               # One-time cloud setup scripts + secrets management
-├── gatekeeper/              # OPA Gatekeeper constraint templates
-├── gitops/
-│   ├── apps/                # ArgoCD Application + AppProject CRDs
-│   ├── argocd/              # ArgoCD Helm install values
-│   └── notifications/       # ArgoCD notification triggers & templates
-├── istio/                   # Service mesh (mTLS, traffic policies, gateway)
-├── k8s/
-│   ├── base/                # Kustomize base manifests per service
-│   └── overlays/            # Environment overlays (dev, qa)
-├── kyverno/                 # Admission control policies + exceptions
-├── monitoring/              # Prometheus Helm values, alert rules, dashboards
-├── notify/                  # Discord notifier + K8s event watcher
-├── policy/                  # OPA/Rego cost and security policies
-├── qa/                      # BDD tests (Behave + pytest)
-├── rag/                     # RAG API and ChromaDB integration
-└── terraform/
-    ├── azure/               # Azure modules + dev/qa environments
-    └── gcp/                 # GCP modules (GKE)
+├── .github/workflows/          # CI/CD pipelines (Terraform, ArgoCD, cost, validate)
+├── apps/
+│   └── ai-engine/
+│       ├── prompt/             # Prompt guides per build phase
+│       ├── rag/                # RAG API (FastAPI + ChromaDB + LLM)
+│       └── tools/
+│           ├── k8s-assistant/  # AI-powered pod diagnostics (Ollama / Groq / Claude)
+│           └── anomaly-detector/ # Statistical anomaly detection (Z-score, IQR)
+├── bootstrap/                  # One-time cloud setup scripts + secrets management
+├── ci-cd/
+│   └── scripts/                # deploy-compute.sh / destroy-compute.sh
+├── environments/
+│   └── dev/
+│       └── testing/            # BDD tests (Behave + pytest), post-deploy validation
+├── infrastructure/
+│   ├── azure/
+│   │   ├── environments/dev|qa/ # Terraform root configs
+│   │   └── modules/            # aks, acr, keyvault, vnet, sql_database, budget, …
+│   └── gcp/
+│       ├── environments/dev|qa/
+│       └── modules/            # gke, artifact_registry, cloud_sql, vpc, …
+├── platform/
+│   ├── gitops/argocd/
+│   │   ├── apps/               # ArgoCD Application + AppProject + ApplicationSet CRDs
+│   │   ├── argocd/             # ArgoCD Helm install values
+│   │   ├── helm/               # PostgreSQL fallback Helm values
+│   │   └── notifications/      # Discord notification templates + triggers
+│   ├── kubernetes/
+│   │   ├── base/               # Kustomize base manifests per service
+│   │   └── overlays/dev|qa/    # Environment overlays (replicas, image tags)
+│   ├── networking/
+│   │   └── istio/              # Service mesh (mTLS, gateway, virtual services, auth policies)
+│   ├── observability/
+│   │   ├── alerting/           # Discord notifier, email notifier, K8s event watcher
+│   │   └── monitoring/         # Prometheus Helm values, alert rules, dashboards
+│   └── security/
+│       ├── gatekeeper/         # OPA Gatekeeper constraint templates + constraints
+│       ├── kyverno/            # Admission control policies + exceptions
+│       └── policies/           # OPA/Rego cost and Terraform guardrail policies
 ```
 
 ---
@@ -276,7 +292,7 @@ GET  /stats          # Documents indexed, query count, avg latency
 AI-powered Kubernetes diagnostics tool. Analyzes pod logs, identifies root causes, and suggests remediation commands.
 
 **Execution:** CLI tool + K8s CronJob
-**File:** `ai-tools/k8s-assistant/k8s-assistant.py`
+**File:** `apps/ai-engine/tools/k8s-assistant/k8s-assistant.py`
 
 #### Capabilities
 
@@ -302,7 +318,7 @@ kubectl_commands  → copy-paste ready commands
 
 Statistical time-series anomaly detection over Prometheus metrics. Runs every 5 minutes as a Kubernetes CronJob.
 
-**File:** `ai-tools/anomaly-detector/anomaly_detector.py`
+**File:** `apps/ai-engine/tools/anomaly-detector/anomaly_detector.py`
 **Data Source:** Prometheus (`kube-prometheus-stack-prometheus.monitoring:9090`)
 
 #### Detection Methods
@@ -331,7 +347,7 @@ Statistical time-series anomaly detection over Prometheus metrics. Runs every 5 
 
 Always-on Kubernetes event listener. Watches for pod failure events in `rental-dev` and `rental-qa` namespaces and sends instant Discord notifications.
 
-**File:** `notify/k8s_event_watcher.py`
+**File:** `platform/observability/alerting/k8s_event_watcher.py`
 **Execution:** Kubernetes Deployment (always running)
 
 #### Watched Event Reasons
@@ -430,13 +446,13 @@ ReportExport (owner app)
 
 ## 6. Infrastructure (Azure)
 
-All infrastructure is managed via Terraform and deployed to Azure using the KodeKloud lab environment.
+All infrastructure is managed via Terraform. Azure is the primary cloud; GCP is optional.
 
 ### Azure Resources
 
 | Resource | Module | Purpose |
 |---|---|---|
-| AKS Cluster | `modules/aks` | Kubernetes cluster (Standard_D2s_v3 / Standard_B2s nodes) |
+| AKS Cluster | `modules/aks` | Kubernetes cluster (Standard_D2s_v3 nodes, appnode pool) |
 | ACR | `modules/acr` | Container registry for Docker images |
 | Virtual Network | `modules/vnet` | Private networking |
 | Subnet | `modules/subnet` | AKS node subnet |
@@ -445,10 +461,11 @@ All infrastructure is managed via Terraform and deployed to Azure using the Kode
 | Storage Account | `modules/storage_account` | Uploads, backups, Terraform state |
 | Load Balancer | `modules/load_balancer` | Public IP for external traffic |
 | Security Group | `modules/security_group` | Network access control |
+| Budget | `modules/budget` | Weekly spend alerts (70 / 90 / 100 / 110% thresholds) |
 
 > **PostgreSQL note:** `modules/postgresql` exists but is commented out in all environments.
-> KodeKloud blocks `Microsoft.DBforPostgreSQL/register/action`. Uncomment when running
-> on a full Azure subscription.
+> Azure SP may block `Microsoft.DBforPostgreSQL/register/action` depending on subscription permissions.
+> Uncomment when running on a full Azure subscription with appropriate role assignments.
 
 ### Network Design
 
@@ -463,9 +480,13 @@ K8s DNS:          10.1.0.10
 ### Terraform Environments
 
 ```
-terraform/azure/environments/
-├── dev/   ← KodeKloud lab (1-node AKS, Basic ACR, Basic SQL, Standard KV)
-└── qa/    ← KodeKloud lab (1-node AKS, Basic ACR, S1 SQL, Standard KV)
+infrastructure/azure/environments/
+├── dev/   ← 1-node AKS (system pool) + 1-node appnode pool, Basic ACR, Basic SQL, Standard KV
+└── qa/    ← 1-node AKS + appnode pool, Basic ACR, S1 SQL, Standard KV
+
+infrastructure/gcp/environments/
+├── dev/   ← GKE Autopilot, db-f1-micro Cloud SQL, basic Artifact Registry
+└── qa/    ← GKE Autopilot, db-g1-small Cloud SQL
 ```
 
 ### Database per Environment
@@ -478,23 +499,16 @@ terraform/azure/environments/
 | GCP qa | Cloud SQL PostgreSQL 16 | `modules/cloud_sql` | db-g1-small | 10 GB | Secret Manager |
 
 > **Why Azure SQL instead of PostgreSQL?**
-> KodeKloud only allows SQL Database tiers: Basic, S0–S4 (max 50 GB, max 2 instances,
-> Local backup redundancy only). PostgreSQL Flexible Server is not permitted
-> (`Microsoft.DBforPostgreSQL/register/action` blocked).
-> The `modules/postgresql` module is kept commented out for full Azure subscription use.
+> Some Azure subscriptions block `Microsoft.DBforPostgreSQL/register/action`.
+> The `modules/postgresql` module is kept commented out; enable when the subscription
+> allows provider registration and Flexible Server creation.
 
-### KodeKloud Constraints
+### Azure SP Constraints
 
-> These are hard platform limits in the KodeKloud lab environment:
-
-- No `Microsoft.Authorization/roleAssignments` (403 forbidden) — Key Vault uses access policies instead of RBAC
-- No new resource groups (use pre-assigned RG)
-- Only allowed VM sizes: `Standard_D2s_v3`, `Standard_B2s`, `Standard_K8S2_v1`
-- No WAF policies, no container insights
-- No PostgreSQL Flexible Server (`Microsoft.DBforPostgreSQL/register/action` blocked)
-- SQL Database: only Basic / S0–S4, Local backup redundancy, max 50 GB, max 2 instances
-- Service Principal client secret expires each lab session — must regenerate
-- `resource_provider_registrations = "none"` required (cannot register providers)
+- No `Microsoft.Authorization/roleAssignments` — Key Vault uses access policies instead of RBAC
+- `resource_provider_registrations = "none"` required if the SP cannot register providers
+- No WAF policies, no container insights (not needed for dev cost targets)
+- Service Principal client secret must be regenerated if expired
 
 ---
 
@@ -515,7 +529,7 @@ RentalApp-Build CI (GitHub Actions)
         ▼
 ArgoCD Image Updater (polls ACR)
   Detects new image tag
-  Writes updated tag back to git (AI-RentalApp-Ledger/k8s/overlays/dev/)
+  Writes updated tag back to git (AI-RentalApp-Ledger/platform/kubernetes/overlays/dev/)
         │
         ▼
 ArgoCD Auto-Sync
@@ -539,7 +553,7 @@ Discord notification → #deployments
 - Allowed resources: Namespace, Deployment, Service, Ingress, HPA, ConfigMap
 
 **Application `rental-ledger-dev`:**
-- Source path: `k8s/overlays/dev`
+- Source path: `platform/kubernetes/overlays/dev`
 - Auto-sync: enabled (prune + self-heal)
 - Retry: 3 attempts, exponential backoff (5s → 1m)
 - Revision history: 5 (for rollback)
@@ -547,13 +561,13 @@ Discord notification → #deployments
 ### Kustomize Overlays
 
 ```
-k8s/base/              ← shared across all environments
+platform/kubernetes/base/      ← shared across all environments
   api-gateway/
   rental-service/
   ledger-service/
   notification-service/
 
-k8s/overlays/
+platform/kubernetes/overlays/
   dev/    ← replicas=1, dev labels
   qa/     ← replicas=2, qa labels
 ```
@@ -633,8 +647,8 @@ Internet
 - `pod-security` — enforce restricted pod security standards
 
 ### OPA/Rego Policies (Terraform)
-- Cost guardrails — alert on infra changes above budget threshold
-- Region restrictions — Azure eastus only for KodeKloud
+- Cost guardrails — block Terraform apply when weekly Infracost estimate exceeds budget
+- Region restrictions — Azure eastus / GCP us-central1
 - VM size allowlist — only approved sizes can be used
 
 ### Application Security
@@ -649,7 +663,7 @@ Internet
 - **Dependency Review** — GitHub Dependabot on both repos
 
 ### Secrets Management
-- **Azure Key Vault** — access-policy mode (no role assignments, KodeKloud compatible); stores DB credentials, Django secret key; CI/CD SP granted Get+List via access policy
+- **Azure Key Vault** — access-policy mode (no role assignments, SP permission compatible); stores DB credentials, Django secret key; CI/CD SP granted Get+List via access policy
 - **GCP Secret Manager** — stores Cloud SQL credentials + Django secret key; GKE SA granted secretAccessor role
 - **GitHub Actions Secrets** — CI/CD credentials (encrypted via PyNaCl SealedBox)
 - **bootstrap/.env** — gitignored, never committed
@@ -715,13 +729,13 @@ ci.yml (workflow_dispatch)
 
 | Workflow | Trigger | Purpose |
 |---|---|---|
-| `ci-build.yml` | manual | Terraform fmt, OPA lint, K8s manifest validation, Trivy FS scan |
-| `terraform.yml` | manual | Plan / apply / destroy on Azure or GCP |
+| `ci-build.yml` | manual / path trigger | Terraform fmt, OPA lint, K8s manifest validation, Trivy FS scan |
+| `terraform.yml` | manual | Plan / apply on Azure or GCP |
+| `infra-destroy.yml` | manual (approval gate) | Destroy compute-only or full infra |
 | `argocd-bootstrap.yml` | manual | Install ArgoCD, deploy DB, create K8s secrets, apply AppProject + Application |
-| `cost-check.yml` | manual | Infracost estimate + OPA cost guardrail |
-| `qa-validate.yml` | manual | BDD tests against live cluster |
-| `terraform-schedule.yml` | manual | Scheduled destroy/recreate for KodeKloud sessions |
-| `notify.yml` | workflow_call | Reusable Discord + email notification |
+| `cost-check.yml` | manual / path trigger | Infracost estimate + OPA cost guardrail |
+| `k8s-validate.yml` | manual / path trigger | kubeconform + kustomize build validation |
+| `terraform-schedule.yml` | manual / cron | Scheduled destroy/recreate for dev sessions |
 
 #### `terraform.yml` inputs
 
@@ -744,7 +758,7 @@ ci.yml (workflow_dispatch)
 
 | Mode | When to use | DB_HOST | SSL |
 |------|------------|---------|-----|
-| `azure-sql` *(default)* | KodeKloud — Azure SQL Database Basic/S-tier | `*.database.windows.net` | require |
+| `azure-sql` *(default)* | Restricted subscription — Azure SQL Database Basic/S-tier | `*.database.windows.net` | require |
 | `helm-pg` | No Azure DB — PostgreSQL inside AKS via Bitnami Helm | `postgresql.<ns>.svc.cluster.local` | disable |
 | `azure-pg` | Full Azure subscription — PostgreSQL Flexible Server | `*.postgres.database.azure.com` | require |
 
@@ -793,17 +807,17 @@ ci.yml (workflow_dispatch)
 2. CI runs: pylint → bandit → Django check → pytest → SonarQube
 3. Docker image built, pushed to ACR + DockerHub, signed with cosign
 4. ArgoCD Image Updater detects new image tag in ACR
-5. Updates `k8s/overlays/dev/kustomization.yaml` with new tag (git commit)
+5. Updates `platform/kubernetes/overlays/dev/kustomization.yaml` with new tag (git commit)
 6. ArgoCD detects git change → triggers sync
 7. Rolling update deployed to AKS `rental-dev` namespace
 8. Discord `#deployments` channel notified
 
-### UC-07: Infrastructure Lifecycle (KodeKloud)
-1. Weekend session starts → run `terraform-schedule.yml` (action: recreate)
-2. Terraform provisions AKS, ACR, VNet, KeyVault, Storage Account
-3. Run `argocd-bootstrap.yml` → ArgoCD installed, apps registered
-4. CI runs to push latest image → ArgoCD syncs → app live
-5. Sunday evening → run `terraform-schedule.yml` (action: destroy) before session expires
+### UC-07: Infrastructure Lifecycle (Deploy-Destroy Cost Pattern)
+1. Session start → `terraform.yml` (action: apply) or `bash ci-cd/scripts/deploy-compute.sh azure dev`
+2. Terraform provisions AKS + VNet, appnode pool; ACR/SQL/KV already exist from previous session
+3. Run `argocd-bootstrap.yml` (action: install, then apply-apps) → ArgoCD installed, apps registered
+4. ArgoCD syncs latest image from ACR → app live in rental-dev
+5. Session end → `infra-destroy.yml` (scope: compute-only) destroys AKS + VNet, keeps ACR/SQL/KV
 
 ### UC-08: Anomaly Alert Flow
 1. Anomaly Detector CronJob runs every 5 minutes

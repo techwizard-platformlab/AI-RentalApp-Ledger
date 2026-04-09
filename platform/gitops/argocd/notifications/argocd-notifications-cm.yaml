@@ -2,7 +2,7 @@
 # Requires argocd-notifications controller (included in ArgoCD ≥ v2.5).
 #
 # Apply:
-#   kubectl apply -f gitops/notifications/argocd-notifications-cm.yaml -n argocd
+#   kubectl apply -f platform/gitops/argocd/notifications/argocd-notifications-cm.yaml -n argocd
 #
 # Verify triggers fire:
 #   kubectl exec -n argocd deploy/argocd-notifications-controller -- \

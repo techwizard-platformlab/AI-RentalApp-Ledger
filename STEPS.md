@@ -1,8 +1,8 @@
 # rentalAppLedger — Full Deployment Steps & Reference
 
-> **Project**: rentalAppLedger — Python FastAPI microservices on AKS (Azure) + GKE (GCP)
-> **Constraints**: KodeKloud playground — B2s nodes, max 2-3 nodes, 7 vCPU quota, $30/month limit
-> **Cycle**: Destroy every Sunday night → Recreate every Saturday morning
+> **Project**: rentalAppLedger — Django REST API + microservices on AKS (Azure) + GKE (GCP)
+> **Cost target**: ~400 INR / ~$5 USD per week — compute destroyed between sessions
+> **Cycle**: `deploy-compute.sh` at session start → `destroy-compute.sh` at session end
 
 ---
 
@@ -11,17 +11,17 @@
 | Prompt | Layer | Key Files |
 |--------|-------|-----------|
 | 00 | Bootstrap (OIDC, secrets) | `bootstrap/azure/bootstrap.sh`, `bootstrap/gcp/bootstrap.sh` |
-| 01 | Terraform — Azure | `terraform/azure/` (AKS, ACR, KeyVault, VNet) |
-| 02 | Terraform — GCP | `terraform/gcp/` (GKE, Artifact Registry, VPC) |
-| 03 | GitHub Actions CI | `.github/workflows/ci-build.yml`, `Dockerfile` |
-| 04 | K8s manifests + ArgoCD | `k8s/`, `gitops/apps/` |
-| 05 | Istio mTLS + Kyverno | `istio/`, `kyverno/` |
-| 06 | OPA + Gatekeeper + Infracost | `policy/`, `gatekeeper/`, `.infracost/` |
-| 07 | Prometheus + Grafana | `monitoring/` |
-| 08 | AI K8s Assistant + Anomaly Detector | `ai-tools/` |
-| 09 | RAG Pipeline | `rag/` |
-| 10 | BDD Tests + Post-Deploy Validation | `qa/` |
-| 11 | Discord + Email + ArgoCD Notifications | `notify/`, `gitops/notifications/` |
+| 01 | Terraform — Azure | `infrastructure/azure/` (AKS, ACR, KeyVault, VNet) |
+| 02 | Terraform — GCP | `infrastructure/gcp/` (GKE, Artifact Registry, VPC) |
+| 03 | GitHub Actions CI | `.github/workflows/ci-build.yml` |
+| 04 | K8s manifests + ArgoCD | `platform/kubernetes/`, `platform/gitops/argocd/apps/` |
+| 05 | Istio mTLS + Kyverno | `platform/networking/istio/`, `platform/security/kyverno/` |
+| 06 | OPA + Gatekeeper + Infracost | `platform/security/policies/`, `platform/security/gatekeeper/`, `.infracost/` |
+| 07 | Prometheus + Grafana | `platform/observability/monitoring/` |
+| 08 | AI K8s Assistant + Anomaly Detector | `apps/ai-engine/tools/` |
+| 09 | RAG Pipeline | `apps/ai-engine/rag/` |
+| 10 | BDD Tests + Post-Deploy Validation | `environments/dev/testing/` |
+| 11 | Discord + Email + ArgoCD Notifications | `platform/observability/alerting/`, `platform/gitops/argocd/notifications/` |
 
 ---
 
@@ -154,7 +154,7 @@ gcloud container clusters get-credentials rental-dev-gke \
 
 # Verify both clusters are accessible
 kubectl config get-contexts
-kubectl get nodes    # should show 2-3 B2s nodes
+kubectl get nodes    # should show system + appnode pool nodes
 ```
 
 ### Step 8 — Install ArgoCD (AKS Hub Cluster)
@@ -170,7 +170,7 @@ helm repo update
 helm install argocd argo/argo-cd \
   --namespace argocd \
   --version 6.x.x \
-  -f gitops/argocd/install-values.yaml
+  -f platform/gitops/argocd/argocd/install-values.yaml
 
 # Wait for ArgoCD to be ready
 kubectl rollout status deploy/argocd-server -n argocd
@@ -188,7 +188,7 @@ kubectl port-forward svc/argocd-server -n argocd 8080:443
 
 ```bash
 # Apply notifications ConfigMap (5 Discord templates)
-kubectl apply -f gitops/notifications/argocd-notifications-cm.yaml
+kubectl apply -f platform/gitops/argocd/notifications/argocd-notifications-cm.yaml
 
 # Create secret with real Discord webhook URL
 kubectl create secret generic argocd-notifications-secret \
@@ -214,11 +214,11 @@ kubectl label namespace rental-dev istio-injection=enabled --overwrite
 kubectl label namespace rental-qa  istio-injection=enabled --overwrite
 
 # Apply Istio config (mTLS, gateway, virtual services, auth policies)
-kubectl apply -f istio/peer-auth.yaml
-kubectl apply -f istio/gateway.yaml
-kubectl apply -f istio/destination-rules/
-kubectl apply -f istio/virtual-services/
-kubectl apply -f istio/authorization-policies/
+kubectl apply -f platform/networking/istio/peer-auth.yaml
+kubectl apply -f platform/networking/istio/gateway.yaml
+kubectl apply -f platform/networking/istio/destination-rules/
+kubectl apply -f platform/networking/istio/virtual-services/
+kubectl apply -f platform/networking/istio/authorization-policies/
 
 # Verify mTLS is STRICT
 istioctl x describe pod <any-app-pod> -n rental-dev
@@ -232,11 +232,11 @@ helm repo update
 helm install kyverno kyverno/kyverno \
   --namespace kyverno \
   --create-namespace \
-  --set replicaCount=1    # fit B2s constraints
+  --set replicaCount=1
 
 # Apply all 7 policies + exception
-kubectl apply -f kyverno/policies/
-kubectl apply -f kyverno/exceptions/
+kubectl apply -f platform/security/kyverno/policies/
+kubectl apply -f platform/security/kyverno/exceptions/
 
 # Verify policies are loaded
 kubectl get clusterpolicies
@@ -252,13 +252,13 @@ helm install gatekeeper gatekeeper/gatekeeper \
   --create-namespace
 
 # Apply ConstraintTemplates (CRD definitions)
-kubectl apply -f gatekeeper/constraint-templates/
+kubectl apply -f platform/security/gatekeeper/constraint-templates/
 
 # Wait for CRDs to be established
 kubectl wait --for=condition=established crd/requiresignedimages.constraints.gatekeeper.sh --timeout=60s
 
 # Apply Constraints (enforce rules)
-kubectl apply -f gatekeeper/constraints/
+kubectl apply -f platform/security/gatekeeper/constraints/
 
 # Verify
 kubectl get constrainttemplates
@@ -276,16 +276,16 @@ helm install kube-prometheus-stack \
   prometheus-community/kube-prometheus-stack \
   --namespace monitoring \
   --create-namespace \
-  -f monitoring/helm/prometheus-values.yaml
+  -f platform/observability/monitoring/helm/prometheus-values.yaml
 
 # Apply ServiceMonitors (one per microservice)
-kubectl apply -f monitoring/servicemonitors/
+kubectl apply -f platform/observability/monitoring/servicemonitors/
 
 # Apply PrometheusRules (alerts)
-kubectl apply -f monitoring/alerts/
+kubectl apply -f platform/observability/monitoring/alerts/
 
 # Load Grafana dashboards
-bash monitoring/dashboards/apply-dashboards.sh
+bash platform/observability/monitoring/dashboards/apply-dashboards.sh
 
 # Access Grafana (default: admin/prom-operator)
 kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80
@@ -300,15 +300,15 @@ kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80
 
 ```bash
 # Create AppProject (namespace + resource restrictions)
-kubectl apply -f gitops/apps/appproject.yaml
+kubectl apply -f platform/gitops/argocd/apps/appproject.yaml
 
 # Deploy dev environment (auto-sync enabled)
-kubectl apply -f gitops/apps/app-dev.yaml
+kubectl apply -f platform/gitops/argocd/apps/app-dev.yaml
 
 # Deploy qa environment (manual sync)
-kubectl apply -f gitops/apps/app-qa.yaml
+kubectl apply -f platform/gitops/argocd/apps/app-qa.yaml
 
-# → ArgoCD pulls k8s/overlays/dev from GitHub and deploys:
+# → ArgoCD pulls platform/kubernetes/overlays/dev from GitHub and deploys:
 #     api-gateway (port 8000, LoadBalancer)
 #     rental-service (port 8001, ClusterIP)
 #     ledger-service (port 8002, ClusterIP)
@@ -341,7 +341,7 @@ kubectl get pods -n rental-qa
 kubectl config use-context rental-dev-gke
 
 # Apply RBAC so ArgoCD hub (AKS) can manage GKE spoke
-kubectl apply -f gitops/apps/gke-cluster-rbac.yaml
+kubectl apply -f platform/gitops/argocd/apps/gke-cluster-rbac.yaml
 
 # Switch back to AKS hub
 kubectl config use-context rental-dev-aks
@@ -350,7 +350,7 @@ kubectl config use-context rental-dev-aks
 argocd cluster add rental-dev-gke
 
 # Apply ApplicationSet (deploys to both AKS + GKE)
-kubectl apply -f gitops/apps/applicationset-multicluster.yaml
+kubectl apply -f platform/gitops/argocd/apps/applicationset-multicluster.yaml
 ```
 
 ---
@@ -361,14 +361,14 @@ kubectl apply -f gitops/apps/applicationset-multicluster.yaml
 
 ```bash
 # Apply PVC + Deployment + Service
-kubectl apply -f rag/k8s/deployment.yaml
+kubectl apply -f apps/ai-engine/rag/k8s/deployment.yaml
 
 # Apply hourly indexer CronJob
-kubectl apply -f rag/k8s/cronjob-indexer.yaml
+kubectl apply -f apps/ai-engine/rag/k8s/cronjob-indexer.yaml
 
 # Seed test data (run once)
 pip install sqlalchemy psycopg2-binary
-python rag/seed_test_data.py
+python apps/ai-engine/rag/seed_test_data.py
 
 # Test RAG endpoint
 kubectl port-forward svc/rag-api -n rental-dev 8080:8080
@@ -382,25 +382,25 @@ curl -X POST http://localhost:8080/query \
 
 ```bash
 # Apply RBAC for the assistant
-kubectl apply -f ai-tools/k8s-assistant/rbac.yaml
+kubectl apply -f apps/ai-engine/tools/k8s-assistant/rbac.yaml
 
 # Run locally (reads your current kubeconfig)
 pip install kubernetes rich httpx
-python ai-tools/k8s-assistant/k8s-assistant.py --watch
+python apps/ai-engine/tools/k8s-assistant/k8s-assistant.py --watch
 
 # Or analyse a specific pod
-python ai-tools/k8s-assistant/k8s-assistant.py --pod <pod-name> --analyse
+python apps/ai-engine/tools/k8s-assistant/k8s-assistant.py --pod <pod-name> --analyse
 
 # Auto-fix (dry run first!)
-python ai-tools/k8s-assistant/k8s-assistant.py --auto-fix --dry-run
+python apps/ai-engine/tools/k8s-assistant/k8s-assistant.py --auto-fix --dry-run
 ```
 
 ### Step 19 — Deploy Anomaly Detector
 
 ```bash
 # Apply CronJob (runs every 5 minutes)
-kubectl apply -f ai-tools/anomaly-detector/k8s/cronjob.yaml
-kubectl apply -f ai-tools/anomaly-detector/k8s/rbac.yaml
+kubectl apply -f apps/ai-engine/tools/anomaly-detector/k8s/cronjob.yaml
+kubectl apply -f apps/ai-engine/tools/anomaly-detector/k8s/rbac.yaml
 
 # Verify CronJob is scheduled
 kubectl get cronjobs -n rental-dev
@@ -416,12 +416,12 @@ kubectl logs -l app=anomaly-detector -n rental-dev --tail=50
 ### Step 20 — Trigger BDD Tests (GitHub Actions)
 
 ```
-GitHub → Actions → qa-validate.yml → Run workflow
-  Select: environment = dev, cloud = azure
+GitHub → Actions → k8s-validate.yml → Run workflow
+  (validates K8s manifests via kubeconform + kustomize build)
 
-Or run locally:
+Or run BDD tests locally:
   pip install behave requests
-  cd qa
+  cd environments/dev/testing
   BASE_URL=http://localhost:8000 behave features/ --tags @smoke
   behave features/ --tags @smoke --format html --outfile reports/smoke-report.html
 ```
@@ -430,7 +430,7 @@ Or run locally:
 
 ```bash
 # Run full validation (pods, health, TLS, memory, Istio)
-bash qa/validate_deployment.sh
+bash environments/dev/testing/validate_deployment.sh --cloud azure --env dev --notify discord
 
 # Expected output sections:
 #   [1/5] Pod Status Check       → all pods Running
@@ -440,7 +440,7 @@ bash qa/validate_deployment.sh
 #   [5/5] Istio Sidecar Check    → all pods have istio-proxy
 
 # ArgoCD PostSync hook (auto-runs after each sync)
-kubectl apply -f qa/argocd-postsync-hook.yaml
+kubectl apply -f environments/dev/testing/argocd-postsync-hook.yaml
 ```
 
 ### Step 22 — Verify Notifications Are Working
@@ -460,30 +460,36 @@ kubectl exec -n argocd deploy/argocd-notifications-controller -- \
 #   environment: dev
 
 # K8s event watcher: deploy and tail logs
-kubectl apply -f notify/k8s/event-watcher-deployment.yaml
+kubectl apply -f platform/observability/alerting/k8s/event-watcher-deployment.yaml
 kubectl logs -l app=k8s-event-watcher -n rental-dev -f
 ```
 
 ---
 
-## PHASE 7 — Weekly KodeKloud Cycle (Automated)
+## PHASE 7 — Infra Lifecycle (Deploy-Destroy Cost Pattern)
 
 ```
-Every Saturday morning (IST 23:30 → UTC 18:00):
-  → terraform-schedule.yml triggers automatically
-  → Runs terraform apply for Azure + GCP
-  → Rebuilds AKS + GKE clusters from scratch
-  → ArgoCD re-deploys all apps automatically
+Session start (manual):
+  → bash ci-cd/scripts/deploy-compute.sh azure dev
+  OR: GitHub Actions → terraform.yml → action: apply
+  → Provisions AKS + VNet + appnode pool
+  → ACR / SQL / Key Vault persist from previous session (no data loss)
+  → Run argocd-bootstrap.yml → ArgoCD + apps up in ~10 min
   → Discord notification: "Clusters recreated ✅"
 
-Every Sunday night:
-  → terraform-schedule.yml triggers destroy job
-  → Destroys all Azure + GCP resources
+Session end (manual):
+  → bash ci-cd/scripts/destroy-compute.sh azure dev
+  OR: GitHub Actions → infra-destroy.yml → scope: compute-only
+  → Destroys AKS + VNet only; ACR / SQL / Key Vault left running
   → Discord notification: "Clusters destroyed 🔴"
 
+Scheduled (cron — optional):
+  → terraform-schedule.yml runs on configured cron schedule
+  → Automates the destroy/recreate cycle
+
 Every PR to main:
-  → ci-build.yml: lint → Trivy scan → build → push to ACR/GCR
-  → cost-check.yml: Infracost estimate → OPA guard ($30 limit)
+  → ci-build.yml: Terraform fmt → OPA lint → kubeconform → Trivy scan
+  → cost-check.yml: Infracost estimate → OPA guard (weekly budget)
   → ArgoCD Image Updater: detects new image tag → auto-deploys to dev
 ```
 
@@ -504,10 +510,10 @@ Every PR to main:
 ## 🚨 Common Troubleshooting
 
 ```bash
-# Pod stuck in Pending (resource pressure on B2s nodes)
+# Pod stuck in Pending (resource pressure)
 kubectl describe pod <pod-name> -n rental-dev | grep -A5 Events
 
-# OOMKilled — increase memory limit in k8s/base/<service>/deployment.yaml
+# OOMKilled — increase memory limit in platform/kubernetes/base/<service>/deployment.yaml
 kubectl top pods -n rental-dev
 
 # ArgoCD out of sync — force refresh
@@ -538,35 +544,43 @@ cat infracost-output.json | jq '.totalMonthlyCost'
 ## 📁 Project Structure Reference
 
 ```
-rentalAppLedger/
-├── .github/workflows/          # CI/CD pipelines
-│   ├── ci-build.yml            # Main app CI (build, scan, push)
-│   ├── terraform.yml           # Infrastructure provisioning
-│   ├── terraform-schedule.yml  # Weekly destroy/recreate
-│   ├── cost-check.yml          # Infracost + OPA guard
-│   ├── qa-validate.yml         # BDD test runner
-│   └── notify.yml              # Reusable notification workflow
-├── terraform/
-│   ├── azure/                  # AKS, ACR, KeyVault, VNet modules
-│   └── gcp/                    # GKE, Artifact Registry, VPC modules
-├── k8s/
-│   ├── base/                   # Base manifests (4 services)
-│   └── overlays/dev|qa/        # Kustomize overlays
-├── gitops/
-│   ├── apps/                   # ArgoCD Application CRDs
-│   └── notifications/          # ArgoCD notification templates
-├── istio/                      # mTLS, gateway, virtual services
-├── kyverno/                    # Admission policies + exceptions
-├── gatekeeper/                 # OPA constraint templates + constraints
-├── policy/                     # Conftest OPA policies + tests
-├── monitoring/                 # Prometheus, Grafana, AlertManager
-├── ai-tools/
-│   ├── k8s-assistant/          # AI pod troubleshooter
-│   └── anomaly-detector/       # Statistical anomaly detection
-├── rag/                        # RAG pipeline (ChromaDB + LLM)
-├── qa/                         # BDD tests + post-deploy validation
-├── notify/                     # Discord + email + K8s event watcher
-└── bootstrap/                  # One-time OIDC setup scripts
+AI-RentalApp-Ledger/
+├── .github/workflows/
+│   ├── ci-build.yml            # Terraform fmt, OPA lint, manifest validation, Trivy
+│   ├── terraform.yml           # Infrastructure plan / apply
+│   ├── infra-destroy.yml       # Destroy compute-only or full (approval gate)
+│   ├── terraform-schedule.yml  # Scheduled destroy/recreate
+│   ├── argocd-bootstrap.yml    # ArgoCD install + app deploy
+│   ├── k8s-validate.yml        # kubeconform + kustomize build
+│   └── cost-check.yml          # Infracost + OPA guard
+├── apps/ai-engine/
+│   ├── prompt/                 # Prompt guides (00-11)
+│   ├── rag/                    # RAG pipeline (FastAPI + ChromaDB + LLM)
+│   └── tools/
+│       ├── k8s-assistant/      # AI pod troubleshooter
+│       └── anomaly-detector/   # Statistical anomaly detection
+├── bootstrap/                  # One-time cloud setup scripts
+├── ci-cd/scripts/              # deploy-compute.sh / destroy-compute.sh
+├── environments/dev/testing/   # BDD tests + post-deploy validation
+├── infrastructure/
+│   ├── azure/                  # AKS, ACR, KeyVault, VNet, SQL, budget modules
+│   └── gcp/                    # GKE, Artifact Registry, VPC, Cloud SQL modules
+└── platform/
+    ├── gitops/argocd/
+    │   ├── apps/               # ArgoCD Application + AppProject CRDs
+    │   ├── argocd/             # Helm install values
+    │   └── notifications/      # Discord notification templates
+    ├── kubernetes/
+    │   ├── base/               # Base manifests (4 services)
+    │   └── overlays/dev|qa/    # Kustomize overlays
+    ├── networking/istio/        # mTLS, gateway, virtual services
+    ├── observability/
+    │   ├── alerting/           # Discord + email notifiers, K8s event watcher
+    │   └── monitoring/         # Prometheus, Grafana, AlertManager
+    └── security/
+        ├── gatekeeper/         # OPA constraint templates + constraints
+        ├── kyverno/            # Admission policies + exceptions
+        └── policies/           # Conftest OPA Rego policies (cost, Terraform, PR)
 ```
 
 ---

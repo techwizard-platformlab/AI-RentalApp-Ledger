@@ -50,7 +50,7 @@ spec:
       source:
         repoURL: "https://github.com/{org}/rentalAppLedger"
         targetRevision: main
-        path: "k8s/overlays/{{environment}}"
+        path: "platform/kubernetes/overlays/{{environment}}"
         # Kustomize: override image registry per cluster
         kustomize:
           images:

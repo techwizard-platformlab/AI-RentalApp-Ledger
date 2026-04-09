@@ -1,7 +1,7 @@
-name: "Terraform Schedule"
+name: "Infra Schedule"
 
-# KodeKloud playground lifecycle automation:
-#   Destroy: Sunday 18:00 UTC (23:30 IST) — before session expires
+# Deploy-destroy lifecycle automation:
+#   Destroy: Sunday 18:00 UTC (23:30 IST) — end of weekend session
 #   Recreate: Saturday 02:00 UTC (07:30 IST) — ready for weekend session
 on:
   # Schedule triggers disabled during testing — enable after workflow is stable
@@ -80,7 +80,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: terraform/azure/environments/dev
+        working-directory: infrastructure/azure/environments/dev
 
     env:
       ARM_USE_OIDC:               "true"
@@ -139,7 +139,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: terraform/gcp/environments/dev
+        working-directory: infrastructure/gcp/environments/dev
 
     env:
       TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}

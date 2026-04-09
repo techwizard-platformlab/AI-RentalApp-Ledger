@@ -14,7 +14,7 @@ resource "azurerm_lb" "this" {
   name                = "${var.environment}-${var.location_short}-lb"
   location            = var.location
   resource_group_name = var.resource_group_name
-  sku                 = "Standard" # KodeKloud: Standard only for AKS
+  sku                 = "Standard" # Standard SKU required for AKS
   tags                = var.tags
 
   frontend_ip_configuration {

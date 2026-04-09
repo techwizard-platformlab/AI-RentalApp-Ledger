@@ -1,7 +1,6 @@
 # =============================================================================
 # Azure QA environment
 # Mirrors dev with slightly higher resource limits and WAF in Prevention mode.
-# KodeKloud constraints applied — same restrictions as dev.
 # =============================================================================
 
 locals {
@@ -64,8 +63,7 @@ module "security_group" {
   tags                = local.tags
 }
 
-# WAF policy intentionally disabled — KodeKloud playground blocks WAF policy creation
-# (policy: "Non-compliant with policy standards for Azure_playground")
+# WAF policy intentionally disabled — WAF policy creation disabled (requires higher-tier subscription)
 # module "waf_policy" { ... }
 
 # --- Compute ------------------------------------------------------------------
@@ -91,7 +89,7 @@ module "acr" {
   resource_group_name = var.resource_group_name
   sku                 = local.cfg.acr_sku
   tags                = local.tags
-  # NOTE: AcrPull role assignment removed — KodeKloud blocks role assignments (403)
+  # NOTE: AcrPull role assignment removed — SP may lack role assignment permissions — check IAM
 }
 
 module "load_balancer" {
@@ -114,11 +112,11 @@ module "keyvault" {
   soft_delete_days    = 7
   cicd_sp_object_id   = var.cicd_sp_object_id
   tags                = local.tags
-  # Access-policy mode — no role assignments needed (KodeKloud compatible)
+  # Access-policy mode — no role assignments needed
 }
 
-# NOTE: PostgreSQL Flexible Server is blocked on KodeKloud.
-# Uncomment below when running on a full Azure subscription.
+# NOTE: PostgreSQL Flexible Server not used — Azure SQL is sufficient for dev.
+# Uncomment below if PostgreSQL is preferred over Azure SQL.
 #
 # module "postgresql" {
 #   source              = "../../modules/postgresql"
@@ -132,7 +130,7 @@ module "keyvault" {
 #   depends_on          = [module.keyvault]
 # }
 
-# Azure SQL Database — KodeKloud allowed (S1 for QA load capacity)
+# Azure SQL Database — S1 for QA load capacity
 module "sql_database" {
   source              = "../../modules/sql_database"
   environment         = local.env

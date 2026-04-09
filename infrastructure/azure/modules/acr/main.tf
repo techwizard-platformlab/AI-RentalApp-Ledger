@@ -16,5 +16,5 @@ resource "azurerm_container_registry" "this" {
   tags = var.tags
 }
 
-# NOTE: AcrPull role assignment intentionally removed — KodeKloud blocks
-# Microsoft.Authorization/roleAssignments (403). Assign manually via Azure Portal if needed.
+# NOTE: AcrPull role assignment intentionally removed — SP may lack role assignment
+# permissions — check IAM. Assign manually via Azure Portal if needed.

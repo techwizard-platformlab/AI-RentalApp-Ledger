@@ -49,7 +49,7 @@ module "gke" {
   pods_range_name      = module.vpc.pods_range_name
   services_range_name  = module.vpc.services_range_name
 
-  # Zonal cluster — 1 zone = exactly 1 node = 2 vCPU, safely within KodeKloud 7 vCPU quota.
+  # Zonal cluster — 1 zone = exactly 1 node = 2 vCPU (cost constraint).
   # Regional cluster (var.region) would create 1 node per zone = 3 nodes = 6 vCPU and 3x cost.
   cluster_location = "us-central1-a"
 
@@ -58,7 +58,7 @@ module "gke" {
     { cidr_block = "0.0.0.0/0", display_name = "all — restrict in prod" }
   ]
 
-  node_count   = 1              # single node in the zone — matches KodeKloud quota
+  node_count   = 1              # single node in the zone — cost constraint: keep resource usage low
   machine_type = "e2-standard-2"
   disk_size_gb = 30
 

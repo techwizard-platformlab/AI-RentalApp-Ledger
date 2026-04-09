@@ -1,6 +1,6 @@
 # =============================================================================
 # Azure Database for PostgreSQL Flexible Server
-# SKU: Burstable B1ms — cheapest tier, suits KodeKloud dev environments.
+# SKU: Burstable B1ms — cheapest tier, suitable for dev environments.
 # Public access with IP firewall rules (no VNet integration to keep it simple).
 # =============================================================================
 
@@ -33,7 +33,7 @@ resource "azurerm_postgresql_flexible_server" "this" {
   storage_mb   = 32768   # 32 GiB minimum
   storage_tier = "P4"
 
-  sku_name = "B_Standard_B1ms"   # Burstable 1 vCore — KodeKloud friendly
+  sku_name = "B_Standard_B1ms"   # Burstable 1 vCore — lowest cost tier
 
   backup_retention_days        = 7
   geo_redundant_backup_enabled = false

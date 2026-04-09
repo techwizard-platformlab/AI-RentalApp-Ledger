@@ -1,6 +1,6 @@
-# GKE Standard mode — Autopilot is blocked in KodeKloud playground
+# GKE Standard mode — Autopilot adds per-pod overhead; Standard gives more control.
 # Cost note: Standard GKE cluster management fee ~$0.10/hr; Autopilot is per-pod.
-# Single node (e2-standard-2) keeps within KodeKloud 7 vCPU quota.
+# Single node (e2-standard-2) keeps resource usage low (cost constraint).
 resource "google_container_cluster" "this" {
   name     = "${var.environment}-${var.region_short}-gke"
   location = var.cluster_location   # zone (e.g. us-central1-a) for dev/qa single-node; region for prod HA
@@ -79,11 +79,11 @@ resource "google_container_node_pool" "primary" {
   cluster    = google_container_cluster.this.name
   location   = var.cluster_location   # must match cluster location
   project    = var.project_id
-  node_count = var.node_count  # 1 in dev (zonal) = exactly 1 node = 2 vCPU within KodeKloud quota
+  node_count = var.node_count  # 1 in dev (zonal) = exactly 1 node = 2 vCPU (cost constraint)
 
   node_config {
-    machine_type    = var.machine_type   # e2-standard-2 (KodeKloud E2/N2 series only)
-    disk_size_gb    = var.disk_size_gb   # max 50 GB per KodeKloud disk limit
+    machine_type    = var.machine_type   # e2-standard-2 (cost constraint: keep resource usage low)
+    disk_size_gb    = var.disk_size_gb   # cost constraint: keep disk size low
     disk_type       = "pd-standard"      # standard persistent disk — cheapest option
     # Attach the least-privilege SA — without this GKE defaults to the broad Compute SA
     service_account = google_service_account.gke_nodes.email

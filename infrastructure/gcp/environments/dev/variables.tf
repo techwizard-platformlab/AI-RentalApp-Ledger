@@ -14,7 +14,7 @@ variable "environment" {
 }
 
 variable "region" {
-  description = "Set in terraform.tfvars — US-based only (KodeKloud constraint)"
+  description = "Set in terraform.tfvars — US-based only"
   type        = string
 }
 

@@ -55,7 +55,7 @@ module "gke" {
     { cidr_block = "0.0.0.0/0", display_name = "all — restrict in prod" }
   ]
 
-  node_count   = 1              # still 1 node for KodeKloud quota
+  node_count   = 1              # cost constraint: keep resource usage low
   machine_type = "e2-standard-2"
   disk_size_gb = 30
 

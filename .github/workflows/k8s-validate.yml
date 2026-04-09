@@ -8,14 +8,14 @@ on:
   push:
     branches: [main, "feature/**", "fix/**", "hotfix/**"]
     paths:
-      - "k8s/**"
-      - "gitops/apps/**"
+      - "platform/kubernetes/**"
+      - "platform/gitops/argocd/apps/**"
       - ".github/workflows/k8s-validate.yml"
   pull_request:
     branches: [main]
     paths:
-      - "k8s/**"
-      - "gitops/apps/**"
+      - "platform/kubernetes/**"
+      - "platform/gitops/argocd/apps/**"
       - ".github/workflows/k8s-validate.yml"
   workflow_dispatch:
 
@@ -57,8 +57,8 @@ jobs:
       - name: Build kustomize overlay
         id: build
         run: |
-          echo "Building k8s/overlays/${{ matrix.overlay }}/"
-          kustomize build k8s/overlays/${{ matrix.overlay }}/ > /tmp/manifests-${{ matrix.overlay }}.yaml
+          echo "Building platform/kubernetes/overlays/${{ matrix.overlay }}/"
+          kustomize build platform/kubernetes/overlays/${{ matrix.overlay }}/ > /tmp/manifests-${{ matrix.overlay }}.yaml
           echo "Built $(grep -c '^---' /tmp/manifests-${{ matrix.overlay }}.yaml || echo 0) documents"
           echo "=== Preview (first 30 lines) ==="
           head -30 /tmp/manifests-${{ matrix.overlay }}.yaml
@@ -177,18 +177,18 @@ jobs:
             -summary \
             -schema-location default \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-            gitops/apps/appproject.yaml \
-            gitops/apps/app-dev.yaml \
-            gitops/apps/app-qa.yaml
+            platform/gitops/argocd/apps/appproject.yaml \
+            platform/gitops/argocd/apps/app-dev.yaml \
+            platform/gitops/argocd/apps/app-qa.yaml
 
       - name: Write GitHub step summary
         if: always()
         run: |
           echo "## ArgoCD App Manifests Validation" >> "$GITHUB_STEP_SUMMARY"
           echo "Files checked:" >> "$GITHUB_STEP_SUMMARY"
-          echo "- \`gitops/apps/appproject.yaml\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- \`gitops/apps/app-dev.yaml\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- \`gitops/apps/app-qa.yaml\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`platform/gitops/argocd/apps/appproject.yaml\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`platform/gitops/argocd/apps/app-dev.yaml\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`platform/gitops/argocd/apps/app-qa.yaml\`" >> "$GITHUB_STEP_SUMMARY"
 
   # ── Gate: all overlays must pass ─────────────────────────────────────────
   # This job is the required status check to set on the branch protection rule.

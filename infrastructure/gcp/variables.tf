@@ -4,17 +4,17 @@
 # =============================================================================
 
 variable "project_id" {
-  description = "GCP project ID — KodeKloud default project only (cannot create new projects)"
+  description = "GCP project ID"
   type        = string
 }
 
 variable "region" {
-  description = "GCP region — US-based only (KodeKloud constraint)"
+  description = "GCP region — US-based only"
   type        = string
   default     = "us-central1"
   validation {
     condition     = startswith(var.region, "us-")
-    error_message = "KodeKloud: only US-based regions are allowed."
+    error_message = "Only US-based regions are allowed."
   }
 }
 
@@ -76,15 +76,15 @@ variable "gke_node_count" {
 }
 
 variable "gke_machine_type" {
-  description = "GKE node machine type — e2-standard-2 = 2 vCPU / 8 GB, lowest viable for KodeKloud"
+  description = "GKE node machine type — e2-standard-2 = 2 vCPU / 8 GB, lowest viable cost"
   type        = string
   default     = "e2-standard-2"
 }
 
 variable "gke_disk_size_gb" {
-  description = "Boot disk size per node in GB — max 50 GB (KodeKloud)"
+  description = "Boot disk size per node in GB — cost constraint: keep disk size low"
   type        = number
-  default     = 30 # keep small; KodeKloud max 50 GB per disk
+  default     = 30 # cost constraint: keep disk size low
 }
 
 variable "kubernetes_version" {

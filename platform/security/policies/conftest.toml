@@ -2,7 +2,7 @@
 # https://www.conftest.dev/configuration/
 
 # Policy directories to load
-policy = ["policy/azure", "policy/gcp", "policy/shared", "policy/cost", "policy/pr"]
+policy = ["platform/security/policies/azure", "platform/security/policies/gcp", "platform/security/policies/shared", "platform/security/policies/cost", "platform/security/policies/pr"]
 
 # Output format (stdout, json, tap, table)
 output = "stdout"
@@ -15,7 +15,7 @@ namespace = "main"
 fail_on_warn = false
 
 # Data directory (approved_skus.json, etc.)
-data = ["policy/data"]
+data = ["platform/security/policies/data"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Usage:
@@ -26,18 +26,18 @@ data = ["policy/data"]
 #    terraform show -json tfplan > plan.json
 #
 # 2. Run conftest against Azure plan:
-#    conftest test plan.json --namespace azure --policy policy/azure/
+#    conftest test plan.json --namespace azure --policy platform/security/policies/azure/
 #
 # 3. Run conftest against GCP plan:
-#    conftest test plan.json --namespace gcp --policy policy/gcp/
+#    conftest test plan.json --namespace gcp --policy platform/security/policies/gcp/
 #
 # 4. Run all policies:
-#    conftest test plan.json --policy policy/
+#    conftest test plan.json --policy platform/security/policies/
 #
 # 5. Run OPA unit tests:
-#    conftest verify --policy policy/azure/
-#    conftest verify --policy policy/gcp/
-#    conftest verify --policy policy/shared/
+#    conftest verify --policy platform/security/policies/azure/
+#    conftest verify --policy platform/security/policies/gcp/
+#    conftest verify --policy platform/security/policies/shared/
 #
 # Note: warn[] rules are NON-BLOCKING (exit code 0) and should be surfaced
 # as PR comments. deny[] rules trigger exit code 1 and fail the pipeline.

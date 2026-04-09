@@ -1,4 +1,4 @@
-name: "Terraform"
+name: "Infra Plan / Apply"
 
 # =============================================================================
 # Single workflow for ALL environments and ALL actions.
@@ -14,8 +14,7 @@ name: "Terraform"
 #   Setup: repo Settings → Environments → create "terraform-destructive-approval"
 #          → add yourself as a required reviewer.
 #
-# Auth: Azure client-secret (OIDC skipped — KodeKloud SP is not registered
-#       as a federated credential)
+# Auth: Azure client-secret flow (service principal with client secret)
 # =============================================================================
 
 on:
@@ -23,8 +22,8 @@ on:
   # pull_request:
   #   branches: [main]
   #   paths:
-  #     - "terraform/**"
-  #     - "policy/**"
+  #     - "infrastructure/**"
+  #     - "platform/security/policies/**"
   #     - ".github/workflows/terraform.yml"
 
   # push:
@@ -34,7 +33,7 @@ on:
   #     - "fix/**"
   #     - "hotfix/**"
   #   paths:
-  #     - "terraform/**"
+  #     - "infrastructure/**"
   #     - ".github/workflows/terraform.yml"
 
   workflow_dispatch:
@@ -163,7 +162,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: terraform/azure/environments/${{ needs.setup.outputs.env }}
+        working-directory: infrastructure/azure/environments/${{ needs.setup.outputs.env }}
 
     env:
       ARM_USE_OIDC:        "false"
@@ -184,8 +183,6 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: true
 
-      # ARM_* vars authenticate the Terraform provider (Go SDK) but NOT the az CLI.
-      # azure/login@v2 defaults to OIDC which KodeKloud doesn't support — use direct az login.
       - name: Azure CLI login
         run: |
           az login --service-principal \
@@ -222,6 +219,57 @@ jobs:
         if: needs.setup.outputs.action != 'destroy'
         run: terraform show -json tfplan.binary > tfplan.json
 
+      # ── Infracost cost estimate ───────────────────────────────────────────────
+      - name: Install infracost
+        if: needs.setup.outputs.action != 'destroy'
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh
+
+      - name: Infracost breakdown
+        id: infracost
+        if: needs.setup.outputs.action != 'destroy' && env.INFRACOST_API_KEY != ''
+        env:
+          INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
+        run: |
+          infracost breakdown \
+            --path tfplan.json \
+            --format json \
+            --out-file infracost.json
+
+          # Print human-readable summary to step log
+          infracost output \
+            --path infracost.json \
+            --format table \
+            --show-all-resources
+
+          # Extract total for summary
+          TOTAL=$(jq -r '.totalMonthlyCost // "N/A"' infracost.json)
+          echo "total_monthly_cost=$TOTAL" >> $GITHUB_OUTPUT
+          echo "### Infracost estimate" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Monthly cost | \$$TOTAL |" >> $GITHUB_STEP_SUMMARY
+          echo "| Budget (weekly) | \$5 (~400 INR) |" >> $GITHUB_STEP_SUMMARY
+        continue-on-error: true
+
+      # ── OPA cost guard (runs on infracost JSON output) ────────────────────────
+      - name: Install conftest
+        if: needs.setup.outputs.action != 'destroy'
+        run: |
+          curl -sL https://github.com/open-policy-agent/conftest/releases/download/v0.50.0/conftest_0.50.0_Linux_x86_64.tar.gz | tar xz
+          sudo mv conftest /usr/local/bin/
+
+      - name: OPA cost guard (infracost)
+        id: opa_cost
+        if: needs.setup.outputs.action != 'destroy' && hashFiles('infracost.json') != ''
+        run: |
+          conftest test infracost.json \
+            --policy ../../../../platform/security/policies/cost/cost_guard.rego \
+            --output table | tee opa-cost-results.txt
+          echo "### OPA Cost Guard" >> $GITHUB_STEP_SUMMARY
+          cat opa-cost-results.txt >> $GITHUB_STEP_SUMMARY
+        continue-on-error: true
+
       # Detect any delete or replace (delete+create) operations in the plan.
       # Contains(["delete"]) matches both pure deletes and delete+create replacements.
       - name: Detect destructive changes
@@ -251,28 +299,13 @@ jobs:
             echo "destroy_list=none"  >> $GITHUB_OUTPUT
           fi
 
-      - name: Install conftest
-        if: needs.setup.outputs.action != 'destroy'
-        run: |
-          curl -sL https://github.com/open-policy-agent/conftest/releases/download/v0.50.0/conftest_0.50.0_Linux_x86_64.tar.gz | tar xz
-          sudo mv conftest /usr/local/bin/
-
-      - name: OPA policy check
-        id: opa
-        if: needs.setup.outputs.action != 'destroy'
-        run: |
-          conftest test tfplan.json \
-            --policy ../../../../policy/terraform/azure.rego \
-            --output json | tee opa-results.json
-        continue-on-error: true
-
       # Upload plan binary so azure_apply can apply the EXACT approved plan.
       - name: Upload plan artifact
         if: needs.setup.outputs.action == 'apply' && steps.plan.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: tfplan-azure-${{ needs.setup.outputs.env }}-${{ github.run_id }}
-          path: terraform/azure/environments/${{ needs.setup.outputs.env }}/tfplan.binary
+          path: infrastructure/azure/environments/${{ needs.setup.outputs.env }}/tfplan.binary
           retention-days: 1
 
       - name: Post plan as PR comment
@@ -281,19 +314,21 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const plan = fs.existsSync('terraform/azure/environments/${{ needs.setup.outputs.env }}/plan.txt')
-              ? fs.readFileSync('terraform/azure/environments/${{ needs.setup.outputs.env }}/plan.txt', 'utf8').slice(-60000)
+            const plan = fs.existsSync('infrastructure/azure/environments/${{ needs.setup.outputs.env }}/plan.txt')
+              ? fs.readFileSync('infrastructure/azure/environments/${{ needs.setup.outputs.env }}/plan.txt', 'utf8').slice(-60000)
               : 'Plan unavailable';
             const icon = s => s === 'success' ? 'OK' : s === 'failure' ? 'FAIL' : 'SKIP';
             const hasDestroys = '${{ steps.check_destroys.outputs.has_destroys }}' === 'true';
             const destroyBadge = hasDestroys
               ? '\n> ⚠️ **${{ steps.check_destroys.outputs.destroy_count }} resource(s) will be DESTROYED — manual approval required before apply**\n'
               : '';
+            const costEst = '${{ steps.infracost.outputs.total_monthly_cost }}';
+            const costLine = costEst ? `\n| Infracost estimate | \$${costEst}/month |` : '';
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `## Azure \`${{ needs.setup.outputs.env }}\` Terraform Plan\n${destroyBadge}\n| Step | Status |\n|------|--------|\n| fmt | ${icon('${{ steps.fmt.outcome }}')} |\n| init | ${icon('${{ steps.init.outcome }}')} |\n| validate | ${icon('${{ steps.validate.outcome }}')} |\n| plan | ${icon('${{ steps.plan.outcome }}')} |\n| opa | ${icon('${{ steps.opa.outcome }}')} |\n\`\`\`hcl\n${plan}\n\`\`\``
+              body: `## Azure \`${{ needs.setup.outputs.env }}\` Terraform Plan\n${destroyBadge}\n| Step | Status |\n|------|--------|\n| fmt | ${icon('${{ steps.fmt.outcome }}')} |\n| init | ${icon('${{ steps.init.outcome }}')} |\n| validate | ${icon('${{ steps.validate.outcome }}')} |\n| plan | ${icon('${{ steps.plan.outcome }}')} |\n| infracost | ${icon('${{ steps.infracost.outcome }}')} |\n| opa_cost | ${icon('${{ steps.opa_cost.outcome }}')} |${costLine}\n\`\`\`hcl\n${plan}\n\`\`\``
             });
 
       - name: Job summary
@@ -370,7 +405,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: terraform/azure/environments/${{ needs.setup.outputs.env }}
+        working-directory: infrastructure/azure/environments/${{ needs.setup.outputs.env }}
 
     env:
       ARM_USE_OIDC:        "false"
@@ -413,7 +448,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: tfplan-azure-${{ needs.setup.outputs.env }}-${{ github.run_id }}
-          path: terraform/azure/environments/${{ needs.setup.outputs.env }}
+          path: infrastructure/azure/environments/${{ needs.setup.outputs.env }}
 
       - name: Terraform apply
         if: needs.setup.outputs.action == 'apply'
@@ -450,7 +485,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: terraform/gcp/environments/${{ needs.setup.outputs.env }}
+        working-directory: infrastructure/gcp/environments/${{ needs.setup.outputs.env }}
 
     env:
       TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}
@@ -520,27 +555,12 @@ jobs:
             echo "destroy_list=none"  >> $GITHUB_OUTPUT
           fi
 
-      - name: Install conftest
-        if: needs.setup.outputs.action != 'destroy'
-        run: |
-          curl -sL https://github.com/open-policy-agent/conftest/releases/download/v0.50.0/conftest_0.50.0_Linux_x86_64.tar.gz | tar xz
-          sudo mv conftest /usr/local/bin/
-
-      - name: OPA policy check
-        id: opa
-        if: needs.setup.outputs.action != 'destroy'
-        run: |
-          conftest test tfplan.json \
-            --policy ../../../../policy/terraform/gcp.rego \
-            --output json | tee opa-results.json
-        continue-on-error: true
-
       - name: Upload plan artifact
         if: needs.setup.outputs.action == 'apply' && steps.plan.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: tfplan-gcp-${{ needs.setup.outputs.env }}-${{ github.run_id }}
-          path: terraform/gcp/environments/${{ needs.setup.outputs.env }}/tfplan.binary
+          path: infrastructure/gcp/environments/${{ needs.setup.outputs.env }}/tfplan.binary
           retention-days: 1
 
       - name: Job summary
@@ -607,7 +627,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: terraform/gcp/environments/${{ needs.setup.outputs.env }}
+        working-directory: infrastructure/gcp/environments/${{ needs.setup.outputs.env }}
 
     env:
       TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}
@@ -635,7 +655,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: tfplan-gcp-${{ needs.setup.outputs.env }}-${{ github.run_id }}
-          path: terraform/gcp/environments/${{ needs.setup.outputs.env }}
+          path: infrastructure/gcp/environments/${{ needs.setup.outputs.env }}
 
       - name: Terraform apply
         if: needs.setup.outputs.action == 'apply'

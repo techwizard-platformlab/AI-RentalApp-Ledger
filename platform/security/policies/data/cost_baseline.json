@@ -1,24 +1,29 @@
 {
-  "_comment": "Expected monthly costs for dev environment (KodeKloud playground). Used for drift detection: warn if actual > baseline * 1.2",
+  "_comment": "Expected monthly cost baseline — deploy-destroy pattern (3-4 hrs/day, 22 working days = 88 hrs/month). Warn if actual > baseline * 1.2",
   "environment": "dev",
-  "last_updated": "2026-04-04",
-  "total_expected_monthly_usd": 18.50,
+  "last_updated": "2026-04-09",
+  "pattern": "deploy-destroy (88 hrs/month)",
+  "weekly_budget_inr": 400,
+  "weekly_budget_usd": 5,
+  "total_expected_monthly_usd": 30,
   "drift_warn_threshold_pct": 20,
+  "drift_deny_threshold_pct": 50,
   "resources": {
     "azure": {
-      "aks_cluster_b2s_1node": 12.00,
-      "acr_basic": 0.17,
-      "storage_account_lrs": 0.10,
-      "key_vault": 0.05,
-      "vnet": 0.00,
-      "public_ip": 0.00
+      "aks_system_node_D2s_v3_88hrs": 8.45,
+      "aks_appnode_D2s_v3_88hrs": 8.45,
+      "acr_basic_persistent": 5.01,
+      "sql_database_basic_persistent": 4.90,
+      "load_balancer_88hrs": 2.20,
+      "storage_key_vault": 1.00
     },
     "gcp": {
-      "gke_e2_standard_2_1node": 4.86,
-      "artifact_registry": 0.10,
-      "gcs_bucket": 0.02,
-      "secret_manager": 0.06,
-      "vpc": 0.00
-    }
+      "gke_management_88hrs": 8.80,
+      "gke_primary_node_e2_standard_2_88hrs": 5.90,
+      "gke_appnode_e2_standard_2_88hrs": 5.90,
+      "cloud_nat_88hrs": 3.96,
+      "artifact_registry_persistent": 1.00
+    },
+    "note": "Run only ONE cloud at a time to stay under 400 INR/week"
   }
 }

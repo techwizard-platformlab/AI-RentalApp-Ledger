@@ -1,5 +1,5 @@
 # Apply this to the GKE spoke cluster BEFORE running: argocd cluster add <gke-context>
-# kubectl apply -f gitops/apps/gke-cluster-rbac.yaml --context=<gke-context>
+# kubectl apply -f platform/gitops/argocd/apps/gke-cluster-rbac.yaml --context=<gke-context>
 
 # ServiceAccount for ArgoCD to use on GKE
 apiVersion: v1

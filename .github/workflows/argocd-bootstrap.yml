@@ -2,7 +2,7 @@ name: ArgoCD Bootstrap
 
 # Installs ArgoCD on AKS and applies AppProject + Application manifests.
 # Run this ONCE after terraform apply succeeds.
-# Re-run any time the KodeKloud environment is recreated.
+# Re-run any time the environment is recreated.
 
 on:
   workflow_dispatch:
@@ -31,7 +31,7 @@ on:
         default: "azure-sql"
         type: choice
         options:
-          - azure-sql   # Azure SQL Database Basic/S-tier (KodeKloud allowed) — pulls creds from Key Vault
+          - azure-sql   # Azure SQL Database Basic/S-tier — pulls creds from Key Vault
           - helm-pg     # In-cluster PostgreSQL via Bitnami Helm chart (no Azure DB needed)
           - azure-pg    # Azure PostgreSQL Flexible Server (full Azure subscription only)
 
@@ -86,7 +86,7 @@ jobs:
           echo "ACR login server: $ACR_SERVER"
 
       # ── Patch kustomize overlay with real ACR server + push to git ──────────
-      # Replaces ACR_LOGIN_SERVER placeholder in k8s/overlays/dev/kustomization.yaml
+      # Replaces ACR_LOGIN_SERVER placeholder in platform/kubernetes/overlays/dev/kustomization.yaml
       # so ArgoCD can resolve the full image reference without needing Image Updater
       # to do the first pull. The PAT needs repo write scope.
       - name: Patch ACR image in kustomize overlay
@@ -95,15 +95,15 @@ jobs:
           ACR_SERVER="${{ steps.acr.outputs.login_server }}"
           # Replace either:
           #   • the placeholder "ACR_LOGIN_SERVER" (first run / after git reset)
-          #   • any existing ACR URL "*.azurecr.io" (KodeKloud env recreated → new ACR name)
+          #   • any existing ACR URL "*.azurecr.io" (env recreated → new ACR name)
           # This way re-running bootstrap always patches to the current ACR, no manual edits.
           # Delimiter is # (not |) to avoid clash with | used for regex alternation in the pattern.
           sed -i -E "s#(ACR_LOGIN_SERVER|[a-z0-9]+\.azurecr\.io)#${ACR_SERVER}#g" \
-            k8s/overlays/${{ github.event.inputs.environment }}/kustomization.yaml
+            platform/kubernetes/overlays/${{ github.event.inputs.environment }}/kustomization.yaml
 
           git config user.email "argocd-bootstrap@github-actions"
           git config user.name "ArgoCD Bootstrap"
-          git add k8s/overlays/${{ github.event.inputs.environment }}/kustomization.yaml
+          git add platform/kubernetes/overlays/${{ github.event.inputs.environment }}/kustomization.yaml
           git diff --cached --quiet && echo "No ACR change needed" && exit 0
           git commit -m "ci: set ACR server ${ACR_SERVER} in dev overlay"
           # Use GITHUB_TOKEN (auto-provided, no secret needed) with contents: write permission.
@@ -163,7 +163,7 @@ jobs:
 
           helm upgrade --install postgresql bitnami/postgresql \
             --namespace "$NS" \
-            --values gitops/helm/postgresql/values-dev.yaml \
+            --values platform/gitops/argocd/helm/postgresql/values-dev.yaml \
             --set auth.password="$DB_PASSWORD" \
             --set auth.postgresPassword="$DB_PASSWORD" \
             --timeout 5m \
@@ -267,7 +267,7 @@ jobs:
           helm upgrade --install argocd argo/argo-cd \
             --namespace "${{ env.NAMESPACE_ARGOCD }}" \
             --version "${{ env.ARGOCD_VERSION }}" \
-            --values gitops/argocd/install-values.yaml \
+            --values platform/gitops/argocd/argocd/install-values.yaml \
             --set server.service.type=LoadBalancer \
             --set server.ingress.enabled=false \
             --timeout 10m \
@@ -279,7 +279,7 @@ jobs:
           helm upgrade argocd argo/argo-cd \
             --namespace "${{ env.NAMESPACE_ARGOCD }}" \
             --version "${{ env.ARGOCD_VERSION }}" \
-            --values gitops/argocd/install-values.yaml \
+            --values platform/gitops/argocd/argocd/install-values.yaml \
             --set server.service.type=LoadBalancer \
             --set server.ingress.enabled=false \
             --timeout 10m \
@@ -330,7 +330,7 @@ jobs:
       - name: Apply ArgoCD AppProject
         if: github.event.inputs.action != 'uninstall'
         run: |
-          kubectl apply -f gitops/apps/appproject.yaml
+          kubectl apply -f platform/gitops/argocd/apps/appproject.yaml
 
       # ── Apply Application (with ACR login server substituted) ───────────────
       - name: Apply ArgoCD Application
@@ -338,7 +338,7 @@ jobs:
         run: |
           ACR_SERVER="${{ steps.acr.outputs.login_server }}"
           sed "s|ACR_LOGIN_SERVER|${ACR_SERVER}|g" \
-            gitops/apps/app-${{ github.event.inputs.environment }}.yaml \
+            platform/gitops/argocd/apps/app-${{ github.event.inputs.environment }}.yaml \
             | kubectl apply -f -
 
       # ── Uninstall ───────────────────────────────────────────────────────────

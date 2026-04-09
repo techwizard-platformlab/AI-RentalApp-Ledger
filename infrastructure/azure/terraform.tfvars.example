@@ -6,7 +6,7 @@
 environment         = "dev"
 location            = "eastus"
 location_short      = "eus"
-resource_group_name = "<your-existing-resource-group>"  # KodeKloud pre-created RG
+resource_group_name = "<your-existing-resource-group>"  # use your existing resource group
 
 project = "rentalAppLedger"
 owner   = "ramprasath"
@@ -21,7 +21,7 @@ subnet_cidrs = {
 
 # AKS — 1 node to minimise cost
 aks_node_count      = 1
-aks_vm_size         = "Standard_B2s"  # cheapest KodeKloud-allowed size
+aks_vm_size         = "Standard_B2s"  # cheapest viable size
 aks_os_disk_size_gb = 30
 kubernetes_version  = "1.29"
 

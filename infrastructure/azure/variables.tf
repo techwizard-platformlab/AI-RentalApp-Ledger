@@ -13,12 +13,12 @@ variable "environment" {
 }
 
 variable "location" {
-  description = "Azure region — KodeKloud allowed regions only"
+  description = "Azure region — allowed regions"
   type        = string
   default     = "eastus"
   validation {
     condition     = contains(["eastus", "westus", "centralus", "southcentralus"], var.location)
-    error_message = "KodeKloud: only eastus, westus, centralus, southcentralus are allowed."
+    error_message = "Only eastus, westus, centralus, southcentralus are allowed."
   }
 }
 
@@ -30,7 +30,7 @@ variable "location_short" {
 }
 
 variable "resource_group_name" {
-  description = "Existing Resource Group name — DO NOT create a new one (KodeKloud constraint)"
+  description = "Existing Resource Group name — DO NOT create a new one"
   type        = string
 }
 
@@ -82,13 +82,13 @@ variable "aks_node_count" {
 }
 
 variable "aks_vm_size" {
-  description = "AKS node VM size — Standard_B2s is lowest cost that fits KodeKloud"
+  description = "AKS node VM size — Standard_B2s is lowest cost viable size"
   type        = string
   default     = "Standard_B2s"
 }
 
 variable "aks_os_disk_size_gb" {
-  description = "AKS node OS disk in GB — max 128 GB (KodeKloud), keep low for cost"
+  description = "AKS node OS disk in GB — cost constraint: keep resource usage low"
   type        = number
   default     = 30
 }
