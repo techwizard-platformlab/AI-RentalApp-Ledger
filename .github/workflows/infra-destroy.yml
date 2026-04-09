@@ -1,0 +1,343 @@
+name: "Infra Destroy"
+
+# =============================================================================
+# Targeted destroy workflow — run manually via workflow_dispatch.
+#
+# Scope options:
+#   compute-only  → destroys AKS/GKE + VNet/subnets (compute cost drivers)
+#                   ACR, SQL Database, Key Vault, Storage remain intact
+#   full          → destroys EVERYTHING in the environment
+#                   (same as `az group delete` but tracked in Terraform state)
+#
+# Always requires approval from the "terraform-destructive-approval" environment.
+# Setup: repo Settings → Environments → terraform-destructive-approval
+#        → add yourself as required reviewer.
+#
+# Deploy-destroy pattern: run this after each learning session to stop
+# compute billing. ACR and SQL persist cheaply between sessions.
+# =============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "dev"
+        type: choice
+        options: [dev, qa, uat, prod]
+
+      cloud:
+        description: "Target cloud"
+        required: true
+        default: "azure"
+        type: choice
+        options: [azure, gcp, both]
+
+      scope:
+        description: "Destroy scope"
+        required: true
+        default: "compute-only"
+        type: choice
+        options: [compute-only, full]
+
+      confirm:
+        description: "Type the environment name to confirm destruction"
+        required: true
+        default: ""
+        type: string
+
+concurrency:
+  group: infra-destroy-${{ github.event.inputs.environment }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: "1.5.7"
+
+jobs:
+
+  # ===========================================================================
+  # Validate inputs
+  # ===========================================================================
+  validate:
+    name: "Validate inputs"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm matches environment
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          CONFIRM="${{ github.event.inputs.confirm }}"
+          if [ "$CONFIRM" != "$ENV" ]; then
+            echo "ERROR: confirm field '$CONFIRM' does not match environment '$ENV'."
+            echo "Type the exact environment name in the confirm field to proceed."
+            exit 1
+          fi
+          echo "Confirmed: destroying $ENV (${{ github.event.inputs.scope }}) on ${{ github.event.inputs.cloud }}"
+
+  # ===========================================================================
+  # Approval gate — always required for destroy
+  # ===========================================================================
+  approve:
+    name: "Approve destruction — ${{ github.event.inputs.environment }} (${{ github.event.inputs.scope }})"
+    runs-on: ubuntu-latest
+    needs: validate
+    environment: terraform-destructive-approval
+
+    steps:
+      - name: Summarise what will be destroyed
+        run: |
+          CLOUD="${{ github.event.inputs.cloud }}"
+          ENV="${{ github.event.inputs.environment }}"
+          SCOPE="${{ github.event.inputs.scope }}"
+          echo "============================================================"
+          echo "  DESTROY — $ENV | $CLOUD | $SCOPE"
+          echo "============================================================"
+          if [ "$SCOPE" = "compute-only" ]; then
+            echo "  Destroying compute resources (AKS/GKE, VNet/subnets)."
+            echo "  KEEPING: ACR, SQL Database, Key Vault, Storage Account."
+            echo "  Billing stops for compute. Data and images are preserved."
+          else
+            echo "  Destroying ALL resources in the $ENV environment."
+            echo "  WARNING: SQL data, container images, and secrets will be DELETED."
+          fi
+          echo "============================================================"
+          echo "  Approve in GitHub Actions UI to proceed."
+          echo "============================================================"
+
+  # ===========================================================================
+  # AZURE — Compute-only destroy (AKS + networking, keep ACR/SQL/KV)
+  # ===========================================================================
+  azure_destroy_compute:
+    name: "Azure — destroy compute (${{ github.event.inputs.environment }})"
+    runs-on: ubuntu-latest
+    needs: [validate, approve]
+    if: |
+      (github.event.inputs.cloud == 'azure' || github.event.inputs.cloud == 'both') &&
+      github.event.inputs.scope == 'compute-only'
+
+    defaults:
+      run:
+        working-directory: infrastructure/azure/environments/${{ github.event.inputs.environment }}
+
+    env:
+      ARM_USE_OIDC:        "false"
+      ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_CLIENT_SECRET:   ${{ secrets.AZURE_CLIENT_SECRET }}
+      ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_resource_group_name: ${{ secrets.TF_BACKEND_RG }}
+      TF_VAR_subscription_id:    ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_cicd_sp_object_id:  ${{ secrets.AZURE_SP_OBJECT_ID }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: true
+
+      - name: Azure CLI login
+        run: |
+          az login --service-principal \
+            --username "$ARM_CLIENT_ID" \
+            --password "$ARM_CLIENT_SECRET" \
+            --tenant  "$ARM_TENANT_ID" \
+            --output none
+          az account set --subscription "$ARM_SUBSCRIPTION_ID"
+
+      - name: Terraform init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.TF_BACKEND_RG }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
+            -backend-config="container_name=${{ secrets.TF_BACKEND_CONTAINER }}"
+
+      - name: Destroy compute (AKS + load balancer + networking)
+        run: |
+          terraform destroy -auto-approve -no-color \
+            -target=module.aks \
+            -target=module.load_balancer \
+            -target=module.security_group \
+            -target=module.subnet \
+            -target=module.vnet
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Azure Compute Destroy — ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| AKS cluster | destroyed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Load balancer | destroyed |" >> $GITHUB_STEP_SUMMARY
+          echo "| VNet / Subnets | destroyed |" >> $GITHUB_STEP_SUMMARY
+          echo "| ACR | **kept** |" >> $GITHUB_STEP_SUMMARY
+          echo "| SQL Database | **kept** |" >> $GITHUB_STEP_SUMMARY
+          echo "| Key Vault | **kept** |" >> $GITHUB_STEP_SUMMARY
+          echo "| Storage Account | **kept** |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Billing stopped for compute. Re-deploy with: **Infra Plan / Apply** → action=apply" >> $GITHUB_STEP_SUMMARY
+
+  # ===========================================================================
+  # AZURE — Full destroy (entire environment)
+  # ===========================================================================
+  azure_destroy_full:
+    name: "Azure — full destroy (${{ github.event.inputs.environment }})"
+    runs-on: ubuntu-latest
+    needs: [validate, approve]
+    if: |
+      (github.event.inputs.cloud == 'azure' || github.event.inputs.cloud == 'both') &&
+      github.event.inputs.scope == 'full'
+
+    defaults:
+      run:
+        working-directory: infrastructure/azure/environments/${{ github.event.inputs.environment }}
+
+    env:
+      ARM_USE_OIDC:        "false"
+      ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_CLIENT_SECRET:   ${{ secrets.AZURE_CLIENT_SECRET }}
+      ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_resource_group_name: ${{ secrets.TF_BACKEND_RG }}
+      TF_VAR_subscription_id:    ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_cicd_sp_object_id:  ${{ secrets.AZURE_SP_OBJECT_ID }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: true
+
+      - name: Azure CLI login
+        run: |
+          az login --service-principal \
+            --username "$ARM_CLIENT_ID" \
+            --password "$ARM_CLIENT_SECRET" \
+            --tenant  "$ARM_TENANT_ID" \
+            --output none
+          az account set --subscription "$ARM_SUBSCRIPTION_ID"
+
+      - name: Terraform init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.TF_BACKEND_RG }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
+            -backend-config="container_name=${{ secrets.TF_BACKEND_CONTAINER }}"
+
+      - name: Terraform destroy (full)
+        run: terraform destroy -auto-approve -no-color
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Azure Full Destroy — ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "All Terraform-managed resources in the ${{ github.event.inputs.environment }} environment have been destroyed." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "To clean up any orphaned Azure resources: \`az group delete --name <rg> --yes\`" >> $GITHUB_STEP_SUMMARY
+
+  # ===========================================================================
+  # GCP — Compute-only destroy (GKE + Cloud NAT, keep Artifact Registry)
+  # ===========================================================================
+  gcp_destroy_compute:
+    name: "GCP — destroy compute (${{ github.event.inputs.environment }})"
+    runs-on: ubuntu-latest
+    needs: [validate, approve]
+    if: |
+      (github.event.inputs.cloud == 'gcp' || github.event.inputs.cloud == 'both') &&
+      github.event.inputs.scope == 'compute-only'
+
+    defaults:
+      run:
+        working-directory: infrastructure/gcp/environments/${{ github.event.inputs.environment }}
+
+    env:
+      TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: true
+
+      - name: GCP OIDC login
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed  # v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account:            ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Terraform init
+        run: terraform init
+
+      - name: Destroy compute (GKE + Cloud NAT + networking)
+        run: |
+          terraform destroy -auto-approve -no-color \
+            -target=module.gke \
+            -target=module.nat \
+            -target=module.vpc
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### GCP Compute Destroy — ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| GKE cluster | destroyed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cloud NAT | destroyed |" >> $GITHUB_STEP_SUMMARY
+          echo "| VPC / Subnets | destroyed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Artifact Registry | **kept** |" >> $GITHUB_STEP_SUMMARY
+
+  # ===========================================================================
+  # GCP — Full destroy
+  # ===========================================================================
+  gcp_destroy_full:
+    name: "GCP — full destroy (${{ github.event.inputs.environment }})"
+    runs-on: ubuntu-latest
+    needs: [validate, approve]
+    if: |
+      (github.event.inputs.cloud == 'gcp' || github.event.inputs.cloud == 'both') &&
+      github.event.inputs.scope == 'full'
+
+    defaults:
+      run:
+        working-directory: infrastructure/gcp/environments/${{ github.event.inputs.environment }}
+
+    env:
+      TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: true
+
+      - name: GCP OIDC login
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed  # v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account:            ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Terraform init
+        run: terraform init
+
+      - name: Terraform destroy (full)
+        run: terraform destroy -auto-approve -no-color
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### GCP Full Destroy — ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "All Terraform-managed GCP resources in the ${{ github.event.inputs.environment }} environment have been destroyed." >> $GITHUB_STEP_SUMMARY
