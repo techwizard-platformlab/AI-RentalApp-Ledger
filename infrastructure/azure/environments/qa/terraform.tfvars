@@ -26,3 +26,6 @@ postgresql_storage_tier = "P4"
 # S1 — 20 DTUs for QA load tests, ~$15/month
 mssql_sku         = "S1"
 mssql_max_size_gb = 10
+
+# ── Budget alerts ─────────────────────────────────────────────────────────────
+alert_emails = ["ramprasath2691@outlook.com"]

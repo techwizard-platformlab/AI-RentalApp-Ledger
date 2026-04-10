@@ -86,7 +86,7 @@ module "vnet" {
   environment         = local.env
   location            = var.location
   location_short      = local.location_short
-  resource_group_name = var.env_resource_group_name
+  resource_group_name = azurerm_resource_group.env.name
   address_space       = [local.cfg.vnet_cidr]
   tags                = local.tags
 }
@@ -95,7 +95,7 @@ module "subnet" {
   source              = "../../modules/subnet"
   environment         = local.env
   location_short      = local.location_short
-  resource_group_name = var.env_resource_group_name
+  resource_group_name = azurerm_resource_group.env.name
   vnet_name           = module.vnet.name
   subnets             = local.cfg.subnet_cidrs
 }
@@ -105,7 +105,7 @@ module "security_group" {
   environment         = local.env
   location            = var.location
   location_short      = local.location_short
-  resource_group_name = var.env_resource_group_name
+  resource_group_name = azurerm_resource_group.env.name
   subnet_ids          = module.subnet.ids
   tags                = local.tags
 }
@@ -116,7 +116,7 @@ module "aks" {
   environment         = local.env
   location            = var.location
   location_short      = local.location_short
-  resource_group_name = var.env_resource_group_name
+  resource_group_name = azurerm_resource_group.env.name
   kubernetes_version  = null
   node_count          = local.cfg.aks_nodes
   vm_size             = local.cfg.aks_vm_size
@@ -130,7 +130,7 @@ module "load_balancer" {
   environment         = local.env
   location            = var.location
   location_short      = local.location_short
-  resource_group_name = var.env_resource_group_name
+  resource_group_name = azurerm_resource_group.env.name
   tags                = local.tags
 }
 
@@ -146,7 +146,7 @@ module "postgresql" {
   environment         = local.env
   location            = var.location
   location_short      = local.location_short
-  resource_group_name = var.env_resource_group_name
+  resource_group_name = azurerm_resource_group.env.name
   sku_name            = var.postgresql_sku
   storage_mb          = var.postgresql_storage_mb
   storage_tier        = var.postgresql_storage_tier
@@ -162,7 +162,7 @@ module "sql_database" {
   environment         = local.env
   location            = var.location
   location_short      = local.location_short
-  resource_group_name = var.env_resource_group_name
+  resource_group_name = azurerm_resource_group.env.name
   db_sku              = var.mssql_sku
   max_size_gb         = var.mssql_max_size_gb
   aks_subnet_cidr     = local.cfg.subnet_cidrs["aks"]
@@ -176,7 +176,7 @@ module "storage_account" {
   environment         = local.env
   location            = var.location
   location_short      = local.location_short
-  resource_group_name = var.env_resource_group_name
+  resource_group_name = azurerm_resource_group.env.name
   suffix              = "app"
   containers          = ["uploads", "backups"]
   tags                = local.tags

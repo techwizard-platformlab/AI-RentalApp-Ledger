@@ -26,3 +26,6 @@ postgresql_storage_tier = "P4"
 # Basic — 5 DTUs, ~$5/month
 mssql_sku         = "Basic"
 mssql_max_size_gb = 2
+
+# ── Budget alerts ─────────────────────────────────────────────────────────────
+alert_emails = ["ramprasath2691@outlook.com"]

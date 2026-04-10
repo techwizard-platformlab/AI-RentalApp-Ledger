@@ -4,6 +4,14 @@
 #
 # resource_group_id is passed directly from the caller (azurerm_resource_group.env.id)
 # so this module does not need a data source lookup — safe to apply even on first run.
+#
+# If alert_emails is empty, notifications fall back to the subscription Owner role
+# so the budget resource is never rejected by Azure for having empty contacts.
+
+locals {
+  emails       = length(var.alert_emails) > 0 ? var.alert_emails : []
+  contact_roles = length(var.alert_emails) > 0 ? [] : ["Owner"]
+}
 
 resource "azurerm_consumption_budget_resource_group" "monthly" {
   name              = "${var.environment}-monthly-budget"
@@ -16,39 +24,39 @@ resource "azurerm_consumption_budget_resource_group" "monthly" {
     start_date = var.budget_start_date
   }
 
-  # Alert at 70% — early warning
   notification {
     enabled        = true
     threshold      = 70
     operator       = "GreaterThan"
     threshold_type = "Actual"
-    contact_emails = var.alert_emails
+    contact_emails = local.emails
+    contact_roles  = local.contact_roles
   }
 
-  # Alert at 90% — approaching limit
   notification {
     enabled        = true
     threshold      = 90
     operator       = "GreaterThan"
     threshold_type = "Actual"
-    contact_emails = var.alert_emails
+    contact_emails = local.emails
+    contact_roles  = local.contact_roles
   }
 
-  # Alert at 100% — limit reached
   notification {
     enabled        = true
     threshold      = 100
     operator       = "GreaterThan"
     threshold_type = "Actual"
-    contact_emails = var.alert_emails
+    contact_emails = local.emails
+    contact_roles  = local.contact_roles
   }
 
-  # Forecast alert — warns before the budget is actually exceeded
   notification {
     enabled        = true
     threshold      = 110
     operator       = "GreaterThan"
     threshold_type = "Forecasted"
-    contact_emails = var.alert_emails
+    contact_emails = local.emails
+    contact_roles  = local.contact_roles
   }
 }
