@@ -8,10 +8,10 @@ variable "resource_group_name" {
   type        = string
 }
 
-variable "weekly_budget_usd" {
-  description = "Weekly spend limit in USD. Default $5 ≈ 420 INR. Adjust for exchange rate."
+variable "monthly_budget_usd" {
+  description = "Monthly spend limit in USD. Default $22 ≈ 1840 INR ($5/week × 4.33 weeks). Adjust for exchange rate."
   type        = number
-  default     = 5
+  default     = 22
 }
 
 variable "budget_start_date" {

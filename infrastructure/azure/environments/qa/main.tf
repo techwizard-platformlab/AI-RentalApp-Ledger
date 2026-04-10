@@ -156,7 +156,7 @@ module "budget" {
   source              = "../../modules/budget"
   environment         = local.env
   resource_group_name = var.env_resource_group_name
-  weekly_budget_usd   = 5
+  monthly_budget_usd  = 22
   budget_start_date   = "2026-04-01T00:00:00Z"
   alert_emails        = var.alert_emails
 }

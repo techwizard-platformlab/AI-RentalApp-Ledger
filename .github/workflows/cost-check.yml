@@ -1,11 +1,11 @@
-name: Cost Check (Infracost + OPA)
+name: Cost Check (OPA Plan + Infracost)
 
 on:
-  # Auto triggers disabled during testing — enable after workflow is stable
-  # pull_request:
-  #   branches: [main]
-  #   paths:
-  #     - "infrastructure/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "infrastructure/**"
+      - "platform/security/policies/cost/**"
   workflow_dispatch:
 
 permissions:
@@ -71,11 +71,42 @@ jobs:
       # ── OPA cost guard ──────────────────────────────────────────────────────
       - name: Install conftest
         run: |
-          wget -qO conftest.tar.gz https://github.com/open-policy-agent/conftest/releases/download/v0.50.0/conftest_0.50.0_Linux_x86_64.tar.gz
+          CONFTEST_VERSION=v0.50.0
+          wget -qO conftest.tar.gz \
+            "https://github.com/open-policy-agent/conftest/releases/download/${CONFTEST_VERSION}/conftest_0.50.0_Linux_x86_64.tar.gz"
           tar xzf conftest.tar.gz
           sudo mv conftest /usr/local/bin/
+          conftest --version
 
-      - name: Run OPA cost policy
+      # ── OPA: evaluate cost from terraform plan JSON (no external API needed) ─
+      - name: OPA cost check — terraform plan
+        id: opa_plan_cost
+        working-directory: infrastructure/${{ matrix.cloud }}/environments/dev
+        run: |
+          set +e
+          conftest test plan.json \
+            --namespace cost_tfplan \
+            --policy ../../../../platform/security/policies/cost/tf_plan_cost.rego \
+            --output json > opa_plan_result.json 2>&1
+          PLAN_EXIT=$?
+          echo "exit_code=${PLAN_EXIT}" >> "$GITHUB_OUTPUT"
+
+          echo "=== OPA Terraform Plan Cost Result ==="
+          cat opa_plan_result.json | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          for result in data:
+              for failure in result.get('failures', []):
+                  print(f'  DENY: {failure[\"msg\"]}')
+              for warning in result.get('warnings', []):
+                  print(f'  WARN: {warning[\"msg\"]}')
+          if not any(r.get('failures') or r.get('warnings') for r in data):
+              print('  OK: cost within budget')
+          " 2>/dev/null || cat opa_plan_result.json
+          set -e
+
+      # ── OPA: evaluate cost from Infracost JSON (API-priced, more accurate) ──
+      - name: OPA cost check — infracost output
         id: opa_cost
         working-directory: infrastructure/${{ matrix.cloud }}/environments/dev
         run: |
@@ -88,56 +119,85 @@ jobs:
           echo "exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
           set -e
 
-      # ── PR comment with cost table ──────────────────────────────────────────
-      - name: Post cost table as PR comment
+      # ── PR comment with cost breakdown ────────────────────────────────────────
+      - name: Post cost breakdown as PR comment
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
-        if: always()
+        if: always() && github.event_name == 'pull_request'
         with:
           script: |
             const fs = require('fs');
             const cloud = '${{ matrix.cloud }}';
+            const base = `infrastructure/${cloud}/environments/dev`;
 
+            // ── Infracost section ───────────────────────────────────────────
             let infracostData = {};
             try {
-              infracostData = JSON.parse(
-                fs.readFileSync('infrastructure/' + cloud + '/environments/dev/infracost.json', 'utf8')
-              );
-            } catch (e) {
-              console.log('Could not read infracost.json');
-            }
+              infracostData = JSON.parse(fs.readFileSync(`${base}/infracost.json`, 'utf8'));
+            } catch (e) {}
 
-            // Build markdown table
-            let table = `## 💰 Cost Estimate — ${cloud.toUpperCase()} (dev)\n\n`;
-            table += '| Resource | Monthly Cost | Status |\n';
-            table += '|----------|-------------|--------|\n';
+            let table = `## Cost Estimate — ${cloud.toUpperCase()} (dev)\n\n`;
+
+            // OPA plan cost result
+            const planExit = '${{ steps.opa_plan_cost.outputs.exit_code }}';
+            const infracostExit = '${{ steps.opa_cost.outputs.exit_code }}';
+
+            const planStatus = planExit === '0' ? '✅ Within budget' : '❌ Over budget';
+            const infraStatus = infracostExit === '0' ? '✅ Within budget' : '❌ Over budget';
+
+            table += `| Check | Result |\n|-------|--------|\n`;
+            table += `| OPA (terraform plan estimate) | ${planStatus} |\n`;
+            table += `| OPA (Infracost API pricing) | ${infraStatus} |\n\n`;
+
+            // Infracost breakdown table
+            table += `### Infracost Breakdown\n\n`;
+            table += `| Resource | Monthly Cost | Status |\n`;
+            table += `|----------|-------------|--------|\n`;
 
             const projects = infracostData.projects || [];
+            let hasResources = false;
             for (const project of projects) {
               const resources = project?.breakdown?.resources || [];
               for (const res of resources) {
+                hasResources = true;
                 const cost = parseFloat(res.monthlyCost || 0).toFixed(2);
-                const status = parseFloat(cost) > 10 ? '⚠️ High' : '✅ OK';
-                table += `| ${res.name} | $${cost} | ${status} |\n`;
+                const status = parseFloat(cost) > 8 ? '⚠️ High' : '✅ OK';
+                table += `| \`${res.name}\` | $${cost} | ${status} |\n`;
               }
             }
+            if (!hasResources) table += `| _No data (Infracost may not have run)_ | — | — |\n`;
 
             const total = parseFloat(infracostData.totalMonthlyCost || 0).toFixed(2);
-            table += `\n**Total: $${total}/month**\n`;
+            table += `\n**Total (Infracost): $${total}/month** | Budget limit: $22/month\n`;
 
-            const exitCode = '${{ steps.opa_cost.outputs.exit_code }}';
-            if (exitCode !== '0') {
-              table += '\n> ❌ **OPA cost policy FAILED** — deployment blocked until cost is reduced below $30/month.\n';
+            // OPA plan cost violations
+            let opaSection = '';
+            try {
+              const opaData = JSON.parse(fs.readFileSync(`${base}/opa_plan_result.json`, 'utf8'));
+              const failures = opaData.flatMap(r => r.failures || []);
+              const warnings = opaData.flatMap(r => r.warnings || []);
+              if (failures.length > 0 || warnings.length > 0) {
+                opaSection += `\n### OPA Plan Cost Findings\n\n`;
+                for (const f of failures) opaSection += `> ❌ ${f.msg}\n\n`;
+                for (const w of warnings) opaSection += `> ⚠️ ${w.msg}\n\n`;
+              }
+            } catch (e) {}
+            table += opaSection;
+
+            table += `\n_Deploy-destroy pattern: compute costs estimated at 88 hrs/month (4 hrs/day × 22 days)_`;
+
+            if (context.issue?.number) {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: table
+              });
             }
 
-            await github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: table
-            });
-
       - name: Fail if OPA cost policy denied
-        if: steps.opa_cost.outputs.exit_code != '0'
+        if: steps.opa_plan_cost.outputs.exit_code != '0' || steps.opa_cost.outputs.exit_code != '0'
         run: |
           echo "OPA cost guard triggered a DENY. See PR comment for details."
+          echo "  opa_plan_cost exit: ${{ steps.opa_plan_cost.outputs.exit_code }}"
+          echo "  opa_infracost exit: ${{ steps.opa_cost.outputs.exit_code }}"
           exit 1
