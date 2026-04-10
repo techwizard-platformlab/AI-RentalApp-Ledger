@@ -1,58 +1,49 @@
-name: CI - Platform Validation
+name: "Platform Lint"
 
-# Validates Terraform configs, OPA Rego policies, and K8s manifests.
-# Application code lives in the RentalApp repo — its CI handles Docker build & push.
+# Validates OPA Rego policy syntax and scans the repo for CVEs / secrets.
+#
+# What this covers:
+#   opa-lint    → checks .rego files compile cleanly (catches syntax errors before
+#                 they silently allow all traffic in conftest)
+#   trivy-scan  → filesystem CVE + secret scan → uploads SARIF to GitHub Security tab
+#
+# What lives elsewhere:
+#   Terraform fmt/validate → terraform.yml (azure_plan / gcp_plan)
+#   K8s manifest validate  → k8s-validate.yml (kustomize build + kubeconform matrix)
 
 on:
-  # Auto triggers disabled during testing — enable after workflow is stable
+  # Auto triggers — enable after workflow is stable
   # push:
-  #   branches: [main]
+  #   branches: [main, "feature/**", "fix/**", "hotfix/**"]
   #   paths:
-  #     - "infrastructure/**"
   #     - "platform/security/policies/**"
-  #     - "platform/kubernetes/**"
-  #     - "platform/gitops/argocd/**"
+  #     - "infrastructure/**"
+  #     - ".github/workflows/ci-build.yml"
   # pull_request:
   #   branches: [main]
+  #   paths:
+  #     - "platform/security/policies/**"
+  #     - "infrastructure/**"
   workflow_dispatch:
 
 permissions:
   contents: read
-  security-events: write   # Upload SARIF to GitHub Security tab
+  security-events: write   # upload SARIF to GitHub Security tab
 
 concurrency:
-  group: ci-platform-${{ github.ref }}
+  group: platform-lint-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # ─────────────────────────────────────────────────────────────────────────
-  # Job 1: Terraform format + validate
-  # ─────────────────────────────────────────────────────────────────────────
-  terraform-lint:
-    name: Terraform Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3
-        with:
-          terraform_version: "1.5.7"
-
-      - name: Terraform fmt check (Azure)
-        run: terraform fmt -check -recursive infrastructure/azure
-        continue-on-error: true
-
-      - name: Terraform fmt check (GCP)
-        run: terraform fmt -check -recursive infrastructure/gcp
-        continue-on-error: true
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # Job 2: OPA Rego policy lint
-  # ─────────────────────────────────────────────────────────────────────────
+  # ===========================================================================
+  # OPA Rego syntax lint
+  # Catches broken policy files before they reach conftest in the plan pipeline.
+  # ===========================================================================
   opa-lint:
-    name: OPA Rego Lint
+    name: "OPA Rego Lint"
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
@@ -61,66 +52,46 @@ jobs:
           curl -sL -o opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
           chmod +x opa
           sudo mv opa /usr/local/bin/
+          opa version
 
-      - name: Check OPA version
-        run: opa version
+      - name: Lint all Rego policies
+        run: |
+          find platform/security/policies -name "*.rego" | while read f; do
+            echo "Checking: $f"
+            opa check "$f"
+          done
 
-      - name: Lint Azure policy
-        run: opa check platform/security/policies/terraform/azure.rego
+      - name: Job summary
+        if: always()
+        run: |
+          echo "### OPA Rego Lint" >> $GITHUB_STEP_SUMMARY
+          echo "Policies checked:" >> $GITHUB_STEP_SUMMARY
+          find platform/security/policies -name "*.rego" | while read f; do
+            echo "- \`$f\`" >> $GITHUB_STEP_SUMMARY
+          done
 
-      - name: Lint GCP policy
-        run: opa check platform/security/policies/terraform/gcp.rego
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # Job 3: K8s manifest validation (kubeval / kubeconform)
-  # ─────────────────────────────────────────────────────────────────────────
-  k8s-validate:
-    name: K8s Manifest Validation
+  # ===========================================================================
+  # Trivy filesystem scan
+  # Scans repo files for known CVEs in dependencies and leaked secrets.
+  # exit-code: 0 — warns but does not block (platform repo has no app code).
+  # Results appear in GitHub → Security → Code scanning alerts.
+  # ===========================================================================
+  trivy-scan:
+    name: "Trivy Security Scan"
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
-      - name: Install kubeconform
-        run: |
-          curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
-            | tar xz
-          sudo mv kubeconform /usr/local/bin/
-
-      - name: Validate k8s base manifests
-        run: |
-          kubeconform \
-            -kubernetes-version 1.29.0 \
-            -skip HorizontalPodAutoscaler \
-            -ignore-missing-schemas \
-            -summary \
-            platform/kubernetes/base/**/*.yaml
-
-      - name: Validate ArgoCD gitops manifests
-        run: |
-          kubeconform \
-            -kubernetes-version 1.29.0 \
-            -ignore-missing-schemas \
-            -summary \
-            platform/gitops/argocd/apps/*.yaml
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # Job 4: Security Scan (Trivy filesystem)
-  # ─────────────────────────────────────────────────────────────────────────
-  security-scan:
-    name: Trivy Security Scan
-    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
       - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # master
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
           scan-type: fs
           scan-ref: .
           format: sarif
           output: trivy-results.sarif
           severity: CRITICAL,HIGH
-          exit-code: 0           # Warn only — don't fail platform repo on app CVEs
+          exit-code: 0           # warn only — don't fail on app CVEs in platform repo
           ignore-unfixed: true
 
       - name: Upload SARIF to GitHub Security tab

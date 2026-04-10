@@ -1,6 +1,9 @@
 # =============================================================================
 # Azure QA environment
-# Mirrors dev with slightly higher resource limits and WAF in Prevention mode.
+# Mirrors dev with higher resource limits for load testing.
+#
+# Does NOT manage: ACR, Key Vault (shared — see infrastructure/azure/shared/)
+# Resource group: my-Rental-App-QA (destroy-safe)
 # =============================================================================
 
 locals {
@@ -13,14 +16,12 @@ locals {
       subnet_cidrs = { aks = "10.0.1.0/24", ingress = "10.0.2.0/24", data = "10.0.3.0/24" }
       aks_nodes    = 1
       aks_vm_size  = "Standard_D2s_v3"
-      acr_sku      = "Basic"
     }
     qa = {
       vnet_cidr    = "10.1.0.0/16"
       subnet_cidrs = { aks = "10.1.1.0/24", ingress = "10.1.2.0/24", data = "10.1.3.0/24" }
       aks_nodes    = 1
       aks_vm_size  = "Standard_B2s"
-      acr_sku      = "Basic"
     }
   }
 
@@ -29,17 +30,28 @@ locals {
   tags = {
     env     = local.env
     project = "rentalAppLedger"
-    owner   = "ramprasath"
+    owner   = "techwizard-platformlab"
   }
 }
 
-# --- Networking ---------------------------------------------------------------
+# ── Shared resource references ────────────────────────────────────────────────
+data "azurerm_container_registry" "shared" {
+  name                = var.acr_name
+  resource_group_name = var.shared_resource_group_name
+}
+
+data "azurerm_key_vault" "shared" {
+  name                = var.key_vault_name
+  resource_group_name = var.shared_resource_group_name
+}
+
+# ── Networking ────────────────────────────────────────────────────────────────
 module "vnet" {
   source              = "../../modules/vnet"
   environment         = local.env
   location            = var.location
   location_short      = local.location_short
-  resource_group_name = var.resource_group_name
+  resource_group_name = var.env_resource_group_name
   address_space       = [local.cfg.vnet_cidr]
   tags                = local.tags
 }
@@ -48,7 +60,7 @@ module "subnet" {
   source              = "../../modules/subnet"
   environment         = local.env
   location_short      = local.location_short
-  resource_group_name = var.resource_group_name
+  resource_group_name = var.env_resource_group_name
   vnet_name           = module.vnet.name
   subnets             = local.cfg.subnet_cidrs
 }
@@ -58,22 +70,19 @@ module "security_group" {
   environment         = local.env
   location            = var.location
   location_short      = local.location_short
-  resource_group_name = var.resource_group_name
+  resource_group_name = var.env_resource_group_name
   subnet_ids          = module.subnet.ids
   tags                = local.tags
 }
 
-# WAF policy intentionally disabled — WAF policy creation disabled (requires higher-tier subscription)
-# module "waf_policy" { ... }
-
-# --- Compute ------------------------------------------------------------------
+# ── Compute ───────────────────────────────────────────────────────────────────
 module "aks" {
   source              = "../../modules/aks"
   environment         = local.env
   location            = var.location
   location_short      = local.location_short
-  resource_group_name = var.resource_group_name
-  kubernetes_version  = null   # auto-select latest supported version
+  resource_group_name = var.env_resource_group_name
+  kubernetes_version  = null
   node_count          = local.cfg.aks_nodes
   vm_size             = local.cfg.aks_vm_size
   os_disk_size_gb     = 30
@@ -81,69 +90,28 @@ module "aks" {
   tags                = local.tags
 }
 
-module "acr" {
-  source              = "../../modules/acr"
-  environment         = local.env
-  location            = var.location
-  location_short      = local.location_short
-  resource_group_name = var.resource_group_name
-  sku                 = local.cfg.acr_sku
-  tags                = local.tags
-  # NOTE: AcrPull role assignment removed — SP may lack role assignment permissions — check IAM
-}
-
 module "load_balancer" {
   source              = "../../modules/load_balancer"
   environment         = local.env
   location            = var.location
   location_short      = local.location_short
-  resource_group_name = var.resource_group_name
+  resource_group_name = var.env_resource_group_name
   tags                = local.tags
 }
 
-# --- Security / Storage -------------------------------------------------------
-module "keyvault" {
-  source              = "../../modules/keyvault"
-  environment         = local.env
-  location            = var.location
-  location_short      = local.location_short
-  resource_group_name = var.resource_group_name
-  sku                 = "standard"
-  soft_delete_days    = 7
-  cicd_sp_object_id   = var.cicd_sp_object_id
-  tags                = local.tags
-  # Access-policy mode — no role assignments needed
-}
-
-# NOTE: PostgreSQL Flexible Server not used — Azure SQL is sufficient for dev.
-# Uncomment below if PostgreSQL is preferred over Azure SQL.
-#
-# module "postgresql" {
-#   source              = "../../modules/postgresql"
-#   environment         = local.env
-#   location            = var.location
-#   location_short      = local.location_short
-#   resource_group_name = var.resource_group_name
-#   aks_subnet_cidr     = local.cfg.subnet_cidrs["aks"]
-#   key_vault_id        = module.keyvault.id
-#   tags                = local.tags
-#   depends_on          = [module.keyvault]
-# }
-
-# Azure SQL Database — S1 for QA load capacity
+# ── Data storage ──────────────────────────────────────────────────────────────
+# Azure SQL Database — S1 for QA load tests (20 DTUs, 250 GB)
 module "sql_database" {
   source              = "../../modules/sql_database"
   environment         = local.env
   location            = var.location
   location_short      = local.location_short
-  resource_group_name = var.resource_group_name
-  db_sku              = "S1"    # qa: 20 DTUs, 250 GB — handles load tests
+  resource_group_name = var.env_resource_group_name
+  db_sku              = "S1"
   max_size_gb         = 10
   aks_subnet_cidr     = local.cfg.subnet_cidrs["aks"]
-  key_vault_name      = module.keyvault.name
+  key_vault_name      = data.azurerm_key_vault.shared.name
   tags                = local.tags
-
-  depends_on = [module.keyvault]
 }
 
 module "storage_account" {
@@ -151,8 +119,18 @@ module "storage_account" {
   environment         = local.env
   location            = var.location
   location_short      = local.location_short
-  resource_group_name = var.resource_group_name
+  resource_group_name = var.env_resource_group_name
   suffix              = "app"
   containers          = ["uploads", "backups"]
   tags                = local.tags
+}
+
+# ── Cost management ───────────────────────────────────────────────────────────
+module "budget" {
+  source              = "../../modules/budget"
+  environment         = local.env
+  resource_group_name = var.env_resource_group_name
+  weekly_budget_usd   = 5
+  budget_start_date   = "2026-04-01T00:00:00Z"
+  alert_emails        = var.alert_emails
 }

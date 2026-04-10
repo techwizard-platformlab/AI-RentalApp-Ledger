@@ -1,11 +1,12 @@
 # =============================================================================
 # Variable sources:
-#   terraform.tfvars (committed)  → environment, location
-#   GitHub Secret → TF_VAR_*     → resource_group_name
+#   terraform.tfvars              → environment, location
+#   GitHub Secret → TF_VAR_*     → env_resource_group_name, shared_resource_group_name,
+#                                   subscription_id, acr_name, key_vault_name
 # =============================================================================
 
 variable "environment" {
-  description = "Set in terraform.tfvars"
+  description = "Deployment environment — set in terraform.tfvars"
   type        = string
   validation {
     condition     = contains(["dev", "qa", "uat", "prod"], var.environment)
@@ -14,14 +15,19 @@ variable "environment" {
 }
 
 variable "location" {
-  description = "Azure region for all resources"
+  description = "Azure region for env resources"
+  type        = string
+  default     = "eastus"
+}
+
+variable "env_resource_group_name" {
+  description = "Env-specific resource group (e.g. my-Rental-App-Dev). Terraform owns this — safe to destroy."
   type        = string
 }
 
-variable "resource_group_name" {
-  description = "SECRET — injected via TF_VAR_resource_group_name (GitHub Secret: AZURE_RESOURCE_GROUP)"
+variable "shared_resource_group_name" {
+  description = "Permanent shared resource group (e.g. my-Rental-App). Contains ACR, Key Vault — never destroyed."
   type        = string
-  sensitive   = true
 }
 
 variable "subscription_id" {
@@ -30,14 +36,18 @@ variable "subscription_id" {
   sensitive   = true
 }
 
-variable "cicd_sp_object_id" {
-  description = "Object ID of the CI/CD service principal — injected via TF_VAR_cicd_sp_object_id (GitHub Secret: AZURE_SP_OBJECT_ID)"
+variable "acr_name" {
+  description = "Shared ACR name (from infrastructure/azure/shared/ outputs) — injected via TF_VAR_acr_name"
   type        = string
-  sensitive   = true
+}
+
+variable "key_vault_name" {
+  description = "Shared Key Vault name (from infrastructure/azure/shared/ outputs) — injected via TF_VAR_key_vault_name"
+  type        = string
 }
 
 variable "alert_emails" {
-  description = "Email addresses for weekly budget alerts (threshold: 400 INR / $5 per week)"
+  description = "Email addresses for weekly budget alerts"
   type        = list(string)
   default     = []
 }

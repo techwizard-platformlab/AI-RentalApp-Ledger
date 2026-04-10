@@ -1,27 +1,24 @@
 #!/usr/bin/env bash
 # =============================================================================
-# rentalAppLedger — Azure Bootstrap (KodeKloud-aware, standalone)
+# rentalAppLedger — Azure Bootstrap
 #
-# Run this directly only if you want to bootstrap Azure in isolation.
-# Normally called from: bootstrap/bootstrap.sh (CLOUD=azure or CLOUD=both)
+# Creates the permanent shared infrastructure in my-Rental-App:
+#   - Terraform state storage account + container
+#   - Env resource groups (my-Rental-App-Dev, my-Rental-App-QA)
+#   - Federated credentials on the managed identity
+#   - Role assignments for the managed identity
 #
-# KodeKloud hard constraints respected:
-#   - Does NOT attempt role assignment (pre-granted by KodeKloud internally)
-#   - Does NOT create a new resource group (uses the pre-existing one)
-#   - Does NOT attempt non-interactive login (az login required beforehand)
-#   - Uses the pre-existing SP (APP_ID) for GitHub Actions auth
+# Run ONCE per subscription. Idempotent — safe to re-run.
 #
-# Auth approach:
-#   PRIMARY  — OIDC federated credentials on pre-existing SP (best-effort add)
-#   FALLBACK — Client secret on pre-existing SP (set AZURE_CLIENT_SECRET)
+# Prerequisites:
+#   az login
+#   Managed identity already created in my-Rental-App (via Azure Portal or az CLI)
 #
-# Usage (standalone):
-#   az login                        # once in browser
+# Usage:
 #   bash bootstrap/azure/bootstrap.sh
 # =============================================================================
 set -euo pipefail
 
-# ── Colours ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
 
@@ -29,279 +26,223 @@ info()    { echo -e "${CYAN}==>${RESET} $*"; }
 success() { echo -e "${GREEN}✔${RESET}  $*"; }
 warn()    { echo -e "${YELLOW}⚠${RESET}  $*"; }
 error()   { echo -e "${RED}✘${RESET}  $*" >&2; }
-blank()   { echo ""; }
 
-# =============================================================================
-# When invoked standalone this script loads its own .env.
-# When called from the parent bootstrap.sh the variables are already exported.
-# =============================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOOTSTRAP_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)/bootstrap"
 ENV_FILE="$BOOTSTRAP_ROOT/.env"
 
-# Load .env only if variables are not already in the environment
-if [[ -z "${AZURE_SUBSCRIPTION_ID:-}" && -f "$ENV_FILE" ]]; then
-  # Minimal safe loader: handles quotes, inline comments, trailing whitespace
+# ── Load .env ─────────────────────────────────────────────────────────────────
+if [[ -f "$ENV_FILE" ]]; then
   while IFS= read -r line; do
     [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
     [[ "$line" != *"="* ]] && continue
-    local_key="${line%%=*}"
-    local_val="${line#*=}"
-    local_key="${local_key#"${local_key%%[![:space:]]*}"}"
-    local_key="${local_key%"${local_key##*[![:space:]]}"}"
-    [[ -z "$local_key" || ! "$local_key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] && continue
-    if [[ "$local_val" =~ ^[[:space:]]*\"([^\"]*)\" ]]; then
-      local_val="${BASH_REMATCH[1]}"
-    elif [[ "$local_val" =~ ^[[:space:]]*\'([^\']*)\' ]]; then
-      local_val="${BASH_REMATCH[1]}"
-    else
-      local_val="${local_val%%[[:space:]]#*}"
-      local_val="${local_val%"${local_val##*[![:space:]]}"}"
-    fi
-    export "$local_key=$local_val"
+    key="${line%%=*}"; val="${line#*=}"
+    key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
+    [[ -z "$key" || ! "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] && continue
+    val="${val%%[[:space:]]#*}"; val="${val%"${val##*[![:space:]]}"}"
+    [[ "$val" =~ ^\"(.*)\"$ ]] && val="${BASH_REMATCH[1]}"
+    [[ "$val" =~ ^\'(.*)\'$ ]] && val="${BASH_REMATCH[1]}"
+    export "$key=$val"
   done < "$ENV_FILE"
 fi
 
-# ── Resolve configuration values ──────────────────────────────────────────────
-RG="${AZURE_RG:-}"
-LOCATION="${AZURE_LOCATION:-eastus}"
+# ── Config ─────────────────────────────────────────────────────────────────────
 SUBSCRIPTION_ID="${AZURE_SUBSCRIPTION_ID:-}"
-TENANT_ID="${AZURE_TENANT_ID:-}"
-APP_ID="${AZURE_APP_ID:-8f4772d5-9056-4f3a-98e6-d0fb30d9592b}"
-GITHUB_ORG="${GITHUB_ORG:-}"
+SHARED_RG="${AZURE_SHARED_RG:-my-Rental-App}"
+LOCATION="${AZURE_LOCATION:-eastus}"
+IDENTITY_NAME="${AZURE_IDENTITY_NAME:-}"
+GITHUB_ORG="${GITHUB_ORG:-techwizard-platformlab}"
 GITHUB_REPO="${GITHUB_REPO:-AI-RentalApp-Ledger}"
-CLIENT_SECRET="${AZURE_CLIENT_SECRET:-}"
+BUILD_REPO="${BUILD_REPO:-RentalApp-Build}"
 CONTAINER_NAME="tfstate"
 
-# ── Validate required variables ───────────────────────────────────────────────
+# Env resource groups (created here, populated by Terraform)
+DEV_RG="my-Rental-App-Dev"
+QA_RG="my-Rental-App-QA"
+
+# ── Validate ───────────────────────────────────────────────────────────────────
 failed=0
-for var in SUBSCRIPTION_ID TENANT_ID RG GITHUB_ORG; do
-  val="${!var:-}"
-  if [[ -z "$val" || "$val" == *"<"* ]]; then
-    error "Missing or unfilled: ${BOLD}${var}${RESET} — set it in bootstrap/.env"
+for var in SUBSCRIPTION_ID IDENTITY_NAME GITHUB_ORG; do
+  if [[ -z "${!var:-}" || "${!var}" == *"<"* ]]; then
+    error "Missing: ${BOLD}${var}${RESET} — set it in bootstrap/.env"
     failed=1
   fi
 done
-[[ "$failed" -eq 0 ]] || { blank; echo "  Fix the above in bootstrap/.env and re-run."; exit 1; }
+[[ "$failed" -eq 0 ]] || exit 1
 
-# =============================================================================
-# STEP 1 — Verify az login session
-# =============================================================================
-info "Checking Azure login session..."
-
-if ! az account show --output none 2>/dev/null; then
-  blank
-  error "No active Azure login session found."
-  echo  "  ┌─────────────────────────────────────────────────────────────┐"
-  echo  "  │  Run this in your terminal, then re-run bootstrap:          │"
-  echo  "  │                                                             │"
-  echo  "  │    az login                                                 │"
-  echo  "  │                                                             │"
-  echo  "  │  A browser window will open. Sign in with:                 │"
-  echo  "  │    $AZURE_LAB_USERNAME"
-  echo  "  │                                                             │"
-  echo  "  │  After login completes, re-run:                            │"
-  echo  "  │    bash bootstrap/bootstrap.sh                              │"
-  echo  "  └─────────────────────────────────────────────────────────────┘"
+# ── Verify login ───────────────────────────────────────────────────────────────
+info "Checking Azure login..."
+az account show --output none 2>/dev/null || {
+  error "Not logged in. Run: az login"
   exit 1
-fi
-
-ACTIVE_ACCOUNT=$(az account show --query user.name -o tsv 2>/dev/null || true)
-success "Logged in as: ${ACTIVE_ACCOUNT:-<unknown>}"
-
-# =============================================================================
-# STEP 2 — Set and verify subscription
-# =============================================================================
-info "Setting subscription: $SUBSCRIPTION_ID"
+}
 az account set --subscription "$SUBSCRIPTION_ID"
+TENANT_ID=$(az account show --query tenantId -o tsv)
+IDENTITY_CLIENT_ID=$(az identity show --name "$IDENTITY_NAME" --resource-group "$SHARED_RG" --query clientId -o tsv 2>/dev/null || true)
+IDENTITY_PRINCIPAL_ID=$(az identity show --name "$IDENTITY_NAME" --resource-group "$SHARED_RG" --query principalId -o tsv 2>/dev/null || true)
 
-CONFIRMED_SUB=$(az account show --query id -o tsv)
-if [[ "$CONFIRMED_SUB" != "$SUBSCRIPTION_ID" ]]; then
-  error "Subscription mismatch: expected '$SUBSCRIPTION_ID', got '$CONFIRMED_SUB'"
+if [[ -z "$IDENTITY_CLIENT_ID" ]]; then
+  error "Managed identity '$IDENTITY_NAME' not found in '$SHARED_RG'."
+  error "Create it first: az identity create --name $IDENTITY_NAME --resource-group $SHARED_RG --location $LOCATION"
   exit 1
 fi
-success "Active subscription confirmed: $SUBSCRIPTION_ID"
-
-# Resolve tenant ID from the current session (handles domain vs GUID)
-SESSION_TENANT=$(az account show --query tenantId -o tsv 2>/dev/null || true)
-if [[ -n "$SESSION_TENANT" ]]; then
-  TENANT_ID="$SESSION_TENANT"
-fi
+success "Identity found: $IDENTITY_NAME (clientId: $IDENTITY_CLIENT_ID)"
 
 # =============================================================================
-# STEP 3 — Create Terraform state Storage Account (idempotent)
+# STEP 1 — Create Terraform state storage account
 # =============================================================================
-info "Checking for existing Terraform state storage account in RG: $RG"
+info "Setting up Terraform state storage in: $SHARED_RG"
 
 SA_NAME=$(az storage account list \
-  --resource-group "$RG" \
+  --resource-group "$SHARED_RG" \
   --query "[?starts_with(name,'rentalledgertf')].name" \
   -o tsv 2>/dev/null | head -1 || true)
 
 if [[ -n "$SA_NAME" ]]; then
-  success "Storage account already exists: $SA_NAME (skipping create)"
+  success "State storage account already exists: $SA_NAME"
 else
-  # Generate a short random suffix — safe cross-platform (no /proc dependency)
-  SA_SUFFIX=$(openssl rand -hex 4 2>/dev/null || date +%s | tail -c 8)
+  SA_SUFFIX=$(openssl rand -hex 4)
   SA_NAME="rentalledgertf${SA_SUFFIX}"
-
-  info "Creating Storage Account: $SA_NAME"
+  info "Creating storage account: $SA_NAME"
   az storage account create \
-    --name                    "$SA_NAME" \
-    --resource-group          "$RG" \
-    --location                "$LOCATION" \
-    --sku                     Standard_LRS \
-    --kind                    StorageV2 \
-    --https-only              true \
+    --name "$SA_NAME" \
+    --resource-group "$SHARED_RG" \
+    --location "$LOCATION" \
+    --sku Standard_LRS \
+    --kind StorageV2 \
+    --https-only true \
     --allow-blob-public-access false \
-    --min-tls-version         TLS1_2 \
+    --min-tls-version TLS1_2 \
     --output none
-  success "Storage account created: $SA_NAME"
+  success "Created: $SA_NAME"
 fi
 
-# =============================================================================
-# STEP 4 — Create blob container (idempotent)
-# =============================================================================
-info "Ensuring blob container exists: $CONTAINER_NAME"
-
-# Try with --auth-mode login first; fall back to key-based if RBAC not ready
-if az storage container create \
-    --name         "$CONTAINER_NAME" \
-    --account-name "$SA_NAME" \
-    --auth-mode    login \
-    --output none 2>/dev/null; then
-  success "Blob container ready (auth: login): $CONTAINER_NAME"
+# Container
+if az storage container create --name "$CONTAINER_NAME" --account-name "$SA_NAME" --auth-mode login --output none 2>/dev/null; then
+  success "Blob container ready: $CONTAINER_NAME"
 else
-  az storage container create \
-    --name         "$CONTAINER_NAME" \
-    --account-name "$SA_NAME" \
-    --output none
-  success "Blob container ready (auth: key): $CONTAINER_NAME"
+  az storage container create --name "$CONTAINER_NAME" --account-name "$SA_NAME" --output none 2>/dev/null || true
+  success "Blob container ready (key auth): $CONTAINER_NAME"
 fi
 
 # =============================================================================
-# STEP 5 — Best-effort: add OIDC federated credentials to existing SP
-#
-# KodeKloud may or may not allow federated-credential creation on the SP.
-# We try both the main-branch and pull-request subjects; skip gracefully if
-# the operation is denied (role/permission constraint).
-#
-# NOTE: Role assignment is intentionally skipped entirely.
-#       KodeKloud internally pre-grants the SP Contributor access to the RG.
+# STEP 2 — Create env resource groups
 # =============================================================================
-info "Attempting to add OIDC federated credentials to SP: $APP_ID (best-effort)"
-blank
-warn "Role assignments are SKIPPED — KodeKloud pre-grants SP access to the RG."
-warn "Do NOT attempt az role assignment create — it will be rejected."
-blank
-
-add_federated_credential() {
-  local fc_name="$1"
-  local subject="$2"
-
-  # Check whether it already exists
-  local existing
-  existing=$(az ad app federated-credential list \
-    --id "$APP_ID" \
-    --query "[?name=='${fc_name}'].name" \
-    -o tsv 2>/dev/null || true)
-
-  if [[ -n "$existing" ]]; then
-    success "Federated credential already exists: $fc_name (skipping)"
-    return 0
-  fi
-
-  # Attempt to create — capture stderr to detect permission denials
-  local err_output
-  if err_output=$(az ad app federated-credential create \
-      --id "$APP_ID" \
-      --parameters "{
-        \"name\": \"${fc_name}\",
-        \"issuer\": \"https://token.actions.githubusercontent.com\",
-        \"subject\": \"${subject}\",
-        \"audiences\": [\"api://AzureADTokenExchange\"]
-      }" 2>&1); then
-    success "Federated credential added: $fc_name"
+for ENV_RG in "$DEV_RG" "$QA_RG"; do
+  info "Ensuring resource group exists: $ENV_RG"
+  if az group show --name "$ENV_RG" --output none 2>/dev/null; then
+    success "Already exists: $ENV_RG"
   else
-    warn "Could not add federated credential '$fc_name' — OIDC may be restricted."
-    warn "Error: $err_output"
-    warn "Use the client-secret fallback instead (see GitHub secrets output below)."
+    az group create --name "$ENV_RG" --location "$LOCATION" --output none
+    success "Created: $ENV_RG"
+  fi
+done
+
+# =============================================================================
+# STEP 3 — Role assignments for managed identity
+# =============================================================================
+info "Assigning roles to managed identity: $IDENTITY_NAME"
+
+assign_role() {
+  local role="$1"
+  local scope="$2"
+  local label="$3"
+
+  if az role assignment list --assignee "$IDENTITY_PRINCIPAL_ID" --role "$role" --scope "$scope" --query "[0].id" -o tsv 2>/dev/null | grep -q .; then
+    success "Role already assigned: $role on $label"
+  else
+    az role assignment create \
+      --assignee "$IDENTITY_PRINCIPAL_ID" \
+      --role "$role" \
+      --scope "$scope" \
+      --output none 2>/dev/null && success "Assigned: $role on $label" || warn "Could not assign $role on $label — check permissions"
   fi
 }
 
-add_federated_credential \
-  "github-main" \
-  "repo:${GITHUB_ORG}/${GITHUB_REPO}:ref:refs/heads/main"
+SUB_SCOPE="/subscriptions/$SUBSCRIPTION_ID"
+DEV_SCOPE=$(az group show --name "$DEV_RG" --query id -o tsv)
+QA_SCOPE=$(az group show --name "$QA_RG" --query id -o tsv)
+SA_SCOPE=$(az storage account show --name "$SA_NAME" --resource-group "$SHARED_RG" --query id -o tsv)
 
-add_federated_credential \
-  "github-pr" \
-  "repo:${GITHUB_ORG}/${GITHUB_REPO}:pull_request"
+assign_role "Contributor"                    "$DEV_SCOPE" "$DEV_RG"
+assign_role "Contributor"                    "$QA_SCOPE"  "$QA_RG"
+assign_role "Contributor"                    "$SUB_SCOPE/resourceGroups/$SHARED_RG" "$SHARED_RG (for ACR/KV creation)"
+assign_role "Storage Blob Data Contributor"  "$SA_SCOPE"  "state storage account"
+assign_role "Key Vault Secrets Officer"      "$SUB_SCOPE/resourceGroups/$SHARED_RG" "shared RG (Key Vault secrets)"
+assign_role "AcrPush"                        "$SUB_SCOPE/resourceGroups/$SHARED_RG" "shared RG (ACR push)"
 
 # =============================================================================
-# STEP 6 — Print GitHub Secrets
-#
-# Both OIDC and client-secret options are printed so you can choose whichever
-# works in your KodeKloud session.
+# STEP 4 — Federated credentials
 # =============================================================================
-blank
+info "Setting up federated credentials..."
+
+add_federated_credential() {
+  local name="$1" subject="$2"
+  local existing
+  existing=$(az identity federated-credential list --identity-name "$IDENTITY_NAME" --resource-group "$SHARED_RG" \
+    --query "[?name=='${name}'].name" -o tsv 2>/dev/null || true)
+  if [[ -n "$existing" ]]; then
+    success "Federated credential exists: $name"
+    return 0
+  fi
+  local err
+  if err=$(az identity federated-credential create \
+      --name "$name" \
+      --identity-name "$IDENTITY_NAME" \
+      --resource-group "$SHARED_RG" \
+      --issuer "https://token.actions.githubusercontent.com" \
+      --subject "$subject" \
+      --audiences '["api://AzureADTokenExchange"]' 2>&1); then
+    success "Created federated credential: $name"
+  else
+    warn "Could not create: $name — $err"
+  fi
+}
+
+# Platform repo (AI-RentalApp-Ledger)
+add_federated_credential "github-platform-dev"         "repo:${GITHUB_ORG}/${GITHUB_REPO}:environment:dev"
+add_federated_credential "github-platform-destructive" "repo:${GITHUB_ORG}/${GITHUB_REPO}:environment:terraform-destructive-approval"
+add_federated_credential "github-platform-shared"      "repo:${GITHUB_ORG}/${GITHUB_REPO}:environment:shared"
+
+# Build repo (RentalApp-Build)
+add_federated_credential "github-build-main"           "repo:${GITHUB_ORG}/${BUILD_REPO}:ref:refs/heads/main"
+add_federated_credential "github-build-dispatch"       "repo:${GITHUB_ORG}/${BUILD_REPO}:workflow_dispatch"
+
+# =============================================================================
+# STEP 5 — Print GitHub Secrets
+# =============================================================================
+echo ""
 echo -e "${BOLD}${GREEN}╔══════════════════════════════════════════════════════════════════════╗${RESET}"
-echo -e "${BOLD}${GREEN}║  AZURE — GitHub → Settings → Secrets → Actions                      ║${RESET}"
+echo -e "${BOLD}${GREEN}║  GitHub Secrets — both repos                                        ║${RESET}"
 echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════════════════════════════════╝${RESET}"
-blank
-
-# ── Option A: OIDC (preferred — no expiring secret) ──────────────────────────
-echo -e "  ${BOLD}${CYAN}Option A — OIDC / Federated Credentials (preferred, no expiry)${RESET}"
-echo -e "  Use this if the federated credentials above were added successfully."
-echo -e "  GitHub Actions workflow needs: permissions: id-token: write"
-blank
-echo -e "  ${BOLD}AZURE_CLIENT_ID${RESET}        = $APP_ID"
-echo -e "  ${BOLD}AZURE_TENANT_ID${RESET}        = $TENANT_ID"
-echo -e "  ${BOLD}AZURE_SUBSCRIPTION_ID${RESET}  = $SUBSCRIPTION_ID"
-echo -e "  ${BOLD}TF_BACKEND_RG${RESET}          = $RG"
-echo -e "  ${BOLD}TF_BACKEND_SA${RESET}          = $SA_NAME"
-echo -e "  ${BOLD}TF_BACKEND_CONTAINER${RESET}   = $CONTAINER_NAME"
-blank
-
-# ── Option B: Client Secret fallback ─────────────────────────────────────────
-echo -e "  ${BOLD}${YELLOW}Option B — Client Secret fallback (expires each KodeKloud session)${RESET}"
-echo -e "  Use this if OIDC did not work or federated credential creation was denied."
-blank
-echo -e "  ${BOLD}AZURE_CLIENT_ID${RESET}        = $APP_ID"
-echo -e "  ${BOLD}AZURE_TENANT_ID${RESET}        = $TENANT_ID"
-echo -e "  ${BOLD}AZURE_SUBSCRIPTION_ID${RESET}  = $SUBSCRIPTION_ID"
-
-if [[ -n "$CLIENT_SECRET" ]]; then
-  echo -e "  ${BOLD}AZURE_CLIENT_SECRET${RESET}    = $CLIENT_SECRET"
-else
-  echo -e "  ${BOLD}AZURE_CLIENT_SECRET${RESET}    = <not set — generate in Azure Portal>"
-  echo -e "                          Azure Portal → App Registrations"
-  echo -e "                          → App: $APP_ID"
-  echo -e "                          → Certificates & secrets → New client secret"
-  echo -e "                          → Copy the Value immediately after creation"
-  echo -e "                          → Set AZURE_CLIENT_SECRET in bootstrap/.env"
-  echo -e "                          → Re-run bootstrap.sh to see it printed here"
-fi
-
-echo -e "  ${BOLD}TF_BACKEND_RG${RESET}          = $RG"
-echo -e "  ${BOLD}TF_BACKEND_SA${RESET}          = $SA_NAME"
-echo -e "  ${BOLD}TF_BACKEND_CONTAINER${RESET}   = $CONTAINER_NAME"
-blank
-
-# ── Terraform backend block ───────────────────────────────────────────────────
-echo -e "  ${BOLD}terraform/azure/backend.tf:${RESET}"
-printf   '    resource_group_name  = "%s"\n' "$RG"
-printf   '    storage_account_name = "%s"\n' "$SA_NAME"
-printf   '    container_name       = "%s"\n' "$CONTAINER_NAME"
-printf   '    key                  = "dev.terraform.tfstate"\n'
-blank
-
-# ── KodeKloud reminders ───────────────────────────────────────────────────────
-echo -e "  ${BOLD}${YELLOW}KodeKloud reminders:${RESET}"
-echo    "  - Role assignments are pre-granted by KodeKloud. Do NOT try to assign"
-echo    "    roles manually — the operation will be rejected."
-echo    "  - Client secrets expire at the end of each lab session."
-echo    "    Regenerate AZURE_CLIENT_SECRET and update GitHub secrets each time."
-echo    "  - OIDC federated credentials do not expire — prefer Option A if it works."
-blank
-
-success "Azure bootstrap complete."
+echo ""
+echo -e "  ${BOLD}── techwizard-platformlab/AI-RentalApp-Ledger ──────────────────────${RESET}"
+echo -e "  ${BOLD}AZURE_CLIENT_ID${RESET}            = $IDENTITY_CLIENT_ID"
+echo -e "  ${BOLD}AZURE_TENANT_ID${RESET}            = $TENANT_ID"
+echo -e "  ${BOLD}AZURE_SUBSCRIPTION_ID${RESET}      = $SUBSCRIPTION_ID"
+echo -e "  ${BOLD}TF_BACKEND_RG${RESET}              = $SHARED_RG"
+echo -e "  ${BOLD}TF_BACKEND_SA${RESET}              = $SA_NAME"
+echo -e "  ${BOLD}TF_BACKEND_CONTAINER${RESET}       = $CONTAINER_NAME"
+echo -e "  ${BOLD}TF_SHARED_RG${RESET}               = $SHARED_RG"
+echo -e "  ${BOLD}ACR_NAME${RESET}                   = <from: terraform -chdir=infrastructure/azure/shared output acr_name>"
+echo -e "  ${BOLD}KEY_VAULT_NAME${RESET}             = <from: terraform -chdir=infrastructure/azure/shared output key_vault_name>"
+echo ""
+echo -e "  ${BOLD}── techwizard-platformlab/RentalApp-Build ──────────────────────────${RESET}"
+echo -e "  ${BOLD}AZURE_CLIENT_ID${RESET}            = $IDENTITY_CLIENT_ID"
+echo -e "  ${BOLD}AZURE_TENANT_ID${RESET}            = $TENANT_ID"
+echo -e "  ${BOLD}AZURE_SUBSCRIPTION_ID${RESET}      = $SUBSCRIPTION_ID"
+echo -e "  ${BOLD}ACR_NAME${RESET}                   = <from: terraform -chdir=infrastructure/azure/shared output acr_name>"
+echo -e "  ${BOLD}ACR_LOGIN_SERVER${RESET}           = <from: terraform -chdir=infrastructure/azure/shared output acr_login_server>"
+echo ""
+echo -e "  ${BOLD}── After running shared Terraform ──────────────────────────────────${RESET}"
+echo -e "  Run these to get ACR and Key Vault names:"
+echo -e "  ${CYAN}  cd infrastructure/azure/shared${RESET}"
+echo -e "  ${CYAN}  terraform init -backend-config=\"resource_group_name=$SHARED_RG\" \\${RESET}"
+echo -e "  ${CYAN}    -backend-config=\"storage_account_name=$SA_NAME\" \\${RESET}"
+echo -e "  ${CYAN}    -backend-config=\"container_name=$CONTAINER_NAME\"${RESET}"
+echo -e "  ${CYAN}  terraform apply -var=\"subscription_id=\$AZURE_SUBSCRIPTION_ID\" \\${RESET}"
+echo -e "  ${CYAN}    -var=\"shared_resource_group_name=$SHARED_RG\"${RESET}"
+echo -e "  ${CYAN}  terraform output acr_name${RESET}"
+echo -e "  ${CYAN}  terraform output key_vault_name${RESET}"
+echo ""
+success "Bootstrap complete."

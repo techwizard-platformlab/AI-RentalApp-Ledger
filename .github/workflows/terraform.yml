@@ -1,24 +1,33 @@
-name: "Infra Plan / Apply"
+name: "Infra"
 
 # =============================================================================
-# Single workflow for ALL environments and ALL actions.
+# Unified infrastructure workflow — plan / apply / destroy / schedule.
 #
-#   pull_request  → plan only, env=dev  (automatic)
-#   push to main  → apply,     env=dev  (automatic)
-#   workflow_dispatch → user chooses: target_env / cloud / action
+# Triggers
+#   workflow_dispatch → manual: choose action, cloud, env, scope
+#   schedule          → automated dev lifecycle (Saturday apply, Sunday destroy)
 #
-# Destruction guard
-#   If the plan contains any resource deletions (or action=destroy), the
-#   pipeline pauses at the "approve" job and waits for a human to click
-#   "Approve" in the GitHub Actions UI before apply/destroy runs.
-#   Setup: repo Settings → Environments → create "terraform-destructive-approval"
-#          → add yourself as a required reviewer.
+# Actions
+#   plan    → terraform plan + infracost estimate + OPA cost guard
+#   apply   → uses saved plan binary (exact approved plan)
+#   destroy → compute-only (AKS/GKE + VNet, keeps ACR/SQL/KV) or full
 #
-# Auth: Azure client-secret flow (service principal with client secret)
+# Safety
+#   Manual destroy/apply-with-deletions → pauses at "terraform-destructive-approval"
+#   Scheduled runs                      → skip approval gate (no human available)
+#   Non-dev apply/destroy               → confirm field must match env name
+#
+# Auth
+#   Azure → OIDC / federated credential (no client secret)
+#   GCP   → OIDC (workload identity)
+#
+# Setup
+#   repo Settings → Environments → create "terraform-destructive-approval"
+#   → add yourself as required reviewer
 # =============================================================================
 
 on:
-  # Auto triggers disabled during testing — enable after workflow is stable
+  # Auto triggers — enable after workflow is stable
   # pull_request:
   #   branches: [main]
   #   paths:
@@ -27,11 +36,7 @@ on:
   #     - ".github/workflows/terraform.yml"
 
   # push:
-  #   branches:
-  #     - main
-  #     - "feature/**"
-  #     - "fix/**"
-  #     - "hotfix/**"
+  #   branches: [main, "feature/**", "fix/**", "hotfix/**"]
   #   paths:
   #     - "infrastructure/**"
   #     - ".github/workflows/terraform.yml"
@@ -59,11 +64,24 @@ on:
         type: choice
         options: [plan, apply, destroy]
 
+      scope:
+        description: "Destroy scope (only used when action=destroy)"
+        required: false
+        default: "compute-only"
+        type: choice
+        options: [compute-only, full]
+
       confirm:
-        description: "For apply/destroy in qa/uat/prod: type the environment name"
+        description: "For apply/destroy on non-dev: type the environment name"
         required: false
         default: ""
         type: string
+
+  schedule:
+    # Sunday 18:00 UTC (23:30 IST) — destroy dev compute to stop billing
+    - cron: "0 18 * * 0"
+    # Saturday 02:00 UTC (07:30 IST) — recreate dev compute for weekend session
+    - cron: "0 2  * * 6"
 
 concurrency:
   group: terraform-${{ github.event.inputs.target_env || 'dev' }}-${{ github.ref }}
@@ -72,6 +90,7 @@ concurrency:
 permissions:
   contents: read
   pull-requests: write
+  id-token: write   # required for GCP OIDC
 
 env:
   TF_VERSION: "1.5.7"
@@ -86,9 +105,12 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       env:       ${{ steps.resolve.outputs.env }}
+      env_rg:    ${{ steps.resolve.outputs.env_rg }}
       action:    ${{ steps.resolve.outputs.action }}
+      scope:     ${{ steps.resolve.outputs.scope }}
       run_azure: ${{ steps.resolve.outputs.run_azure }}
       run_gcp:   ${{ steps.resolve.outputs.run_gcp }}
+      scheduled: ${{ steps.resolve.outputs.scheduled }}
 
     steps:
       - name: Resolve trigger inputs
@@ -96,42 +118,80 @@ jobs:
         run: |
           TRIGGER="${{ github.event_name }}"
 
+          if [ "$TRIGGER" = "schedule" ]; then
+            # Saturday (6) → apply (recreate)  |  Sunday (0) → destroy compute-only
+            DAY=$(date -u +%w)   # 0=Sunday, 6=Saturday
+            if [ "$DAY" = "0" ]; then
+              echo "action=destroy"       >> $GITHUB_OUTPUT
+              echo "scope=compute-only"  >> $GITHUB_OUTPUT
+            else
+              echo "action=apply"        >> $GITHUB_OUTPUT
+              echo "scope=full"          >> $GITHUB_OUTPUT
+            fi
+            echo "env=dev"                   >> $GITHUB_OUTPUT
+            echo "env_rg=my-Rental-App-Dev"  >> $GITHUB_OUTPUT
+            echo "run_azure=true"            >> $GITHUB_OUTPUT
+            echo "run_gcp=true"              >> $GITHUB_OUTPUT
+            echo "scheduled=true"            >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           if [ "$TRIGGER" = "pull_request" ]; then
-            echo "env=dev"         >> $GITHUB_OUTPUT
-            echo "action=plan"     >> $GITHUB_OUTPUT
-            echo "run_azure=true"  >> $GITHUB_OUTPUT
-            echo "run_gcp=false"   >> $GITHUB_OUTPUT
+            echo "env=dev"                   >> $GITHUB_OUTPUT
+            echo "env_rg=my-Rental-App-Dev"  >> $GITHUB_OUTPUT
+            echo "action=plan"               >> $GITHUB_OUTPUT
+            echo "scope=full"                >> $GITHUB_OUTPUT
+            echo "run_azure=true"            >> $GITHUB_OUTPUT
+            echo "run_gcp=false"             >> $GITHUB_OUTPUT
+            echo "scheduled=false"           >> $GITHUB_OUTPUT
             exit 0
           fi
 
           if [ "$TRIGGER" = "push" ]; then
             BRANCH="${{ github.ref_name }}"
+            echo "env=dev"                   >> $GITHUB_OUTPUT
+            echo "env_rg=my-Rental-App-Dev"  >> $GITHUB_OUTPUT
+            echo "scope=full"                >> $GITHUB_OUTPUT
+            echo "run_azure=true"            >> $GITHUB_OUTPUT
+            echo "run_gcp=false"             >> $GITHUB_OUTPUT
+            echo "scheduled=false"           >> $GITHUB_OUTPUT
             if [ "$BRANCH" = "main" ]; then
               echo "action=apply"  >> $GITHUB_OUTPUT
             else
               echo "action=plan"   >> $GITHUB_OUTPUT
             fi
-            echo "env=dev"         >> $GITHUB_OUTPUT
-            echo "run_azure=true"  >> $GITHUB_OUTPUT
-            echo "run_gcp=false"   >> $GITHUB_OUTPUT
             exit 0
           fi
 
+          # workflow_dispatch
           ENV="${{ github.event.inputs.target_env }}"
           ACTION="${{ github.event.inputs.action }}"
           CLOUD="${{ github.event.inputs.cloud }}"
+          SCOPE="${{ github.event.inputs.scope }}"
           CONFIRM="${{ github.event.inputs.confirm }}"
 
-          # Safety check for non-dev apply/destroy
+          # Safety: non-dev apply/destroy requires confirm field = env name
           if [ "$ACTION" != "plan" ] && [ "$ENV" != "dev" ]; then
             if [ "$CONFIRM" != "$ENV" ]; then
-              echo "ERROR: For $ACTION on $ENV, type the environment name in the confirm field."
+              echo "ERROR: For $ACTION on $ENV you must type the environment name in the confirm field."
               exit 1
             fi
           fi
 
-          echo "env=$ENV"       >> $GITHUB_OUTPUT
-          echo "action=$ACTION" >> $GITHUB_OUTPUT
+          # Resolve env-specific resource group name
+          case "$ENV" in
+            dev)  ENV_RG="my-Rental-App-Dev"  ;;
+            qa)   ENV_RG="my-Rental-App-QA"   ;;
+            uat)  ENV_RG="my-Rental-App-UAT"  ;;
+            prod) ENV_RG="my-Rental-App-Prod" ;;
+            *)    ENV_RG="my-Rental-App-Dev"  ;;
+          esac
+
+          echo "env=$ENV"           >> $GITHUB_OUTPUT
+          echo "env_rg=$ENV_RG"     >> $GITHUB_OUTPUT
+          echo "action=$ACTION"     >> $GITHUB_OUTPUT
+          echo "scope=$SCOPE"       >> $GITHUB_OUTPUT
+          echo "scheduled=false"    >> $GITHUB_OUTPUT
 
           if [ "$CLOUD" = "azure" ] || [ "$CLOUD" = "both" ]; then
             echo "run_azure=true"  >> $GITHUB_OUTPUT
@@ -146,14 +206,202 @@ jobs:
           fi
 
   # ===========================================================================
+  # AZURE SHARED — Plan (ACR + Key Vault in my-Rental-App)
+  # Only runs on manual workflow_dispatch when cloud=azure or both.
+  # The shared layer is NOT affected by scheduled destroy/recreate.
+  # ===========================================================================
+  azure_shared_plan:
+    name: "Azure Shared Plan"
+    runs-on: ubuntu-latest
+    needs: setup
+    if: |
+      needs.setup.outputs.run_azure == 'true' &&
+      needs.setup.outputs.scheduled == 'false' &&
+      needs.setup.outputs.action != 'destroy'
+
+    outputs:
+      has_destroys:  ${{ steps.check_destroys.outputs.has_destroys }}
+      destroy_count: ${{ steps.check_destroys.outputs.destroy_count }}
+
+    defaults:
+      run:
+        working-directory: infrastructure/azure/shared
+
+    env:
+      ARM_USE_OIDC:        "true"
+      ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_subscription_id:            ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_shared_resource_group_name: ${{ secrets.TF_SHARED_RG }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: true
+
+      - name: Azure OIDC login
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Terraform fmt check
+        run: terraform fmt -check
+        continue-on-error: true
+
+      - name: Terraform init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.TF_BACKEND_RG }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
+            -backend-config="container_name=${{ secrets.TF_BACKEND_CONTAINER }}"
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        id: plan
+        run: terraform plan -out=tfplan.binary -no-color 2>&1 | tee plan.txt
+        continue-on-error: true
+
+      - name: Convert plan to JSON
+        run: terraform show -json tfplan.binary > tfplan.json
+
+      - name: Detect destructive changes
+        id: check_destroys
+        run: |
+          DESTROY_COUNT=$(jq '[.resource_changes[] | select(.change.actions | contains(["delete"]))] | length' tfplan.json)
+          echo "destroy_count=$DESTROY_COUNT" >> $GITHUB_OUTPUT
+          if [ "$DESTROY_COUNT" -gt 0 ]; then
+            echo "has_destroys=true" >> $GITHUB_OUTPUT
+            echo "::warning::⚠️ $DESTROY_COUNT shared resource(s) will be DESTROYED — approval required"
+          else
+            echo "has_destroys=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload shared plan artifact
+        if: needs.setup.outputs.action == 'apply' && steps.plan.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-azure-shared-${{ github.run_id }}
+          path: infrastructure/azure/shared/tfplan.binary
+          retention-days: 1
+
+      - name: Job summary
+        if: always()
+        run: |
+          echo "### Azure Shared — Plan (ACR + Key Vault)" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| RG | ${{ secrets.TF_SHARED_RG }} (my-Rental-App) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Destroys | ${{ steps.check_destroys.outputs.destroy_count || '0' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Plan | ${{ steps.plan.outcome }} |" >> $GITHUB_STEP_SUMMARY
+
+  # ===========================================================================
+  # AZURE SHARED — Apply (gate via "shared" environment)
+  # Requires manual approval before modifying ACR or Key Vault.
+  # ===========================================================================
+  azure_shared_apply:
+    name: "Azure Shared Apply"
+    runs-on: ubuntu-latest
+    needs: [setup, azure_shared_plan]
+    if: |
+      always() &&
+      needs.setup.outputs.run_azure == 'true' &&
+      needs.setup.outputs.scheduled == 'false' &&
+      needs.setup.outputs.action == 'apply' &&
+      needs.azure_shared_plan.result == 'success'
+    environment: shared
+
+    defaults:
+      run:
+        working-directory: infrastructure/azure/shared
+
+    env:
+      ARM_USE_OIDC:        "true"
+      ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_subscription_id:            ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_shared_resource_group_name: ${{ secrets.TF_SHARED_RG }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: true
+
+      - name: Azure OIDC login
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Terraform init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.TF_BACKEND_RG }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
+            -backend-config="container_name=${{ secrets.TF_BACKEND_CONTAINER }}"
+
+      - name: Download approved plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-azure-shared-${{ github.run_id }}
+          path: infrastructure/azure/shared
+
+      - name: Terraform apply
+        id: apply
+        run: terraform apply -no-color tfplan.binary
+
+      - name: Capture outputs (ACR + Key Vault names)
+        id: tf_outputs
+        if: steps.apply.outcome == 'success'
+        run: |
+          ACR_NAME=$(terraform output -raw acr_name 2>/dev/null || echo "")
+          KV_NAME=$(terraform output -raw key_vault_name 2>/dev/null || echo "")
+          echo "acr_name=$ACR_NAME"         >> $GITHUB_OUTPUT
+          echo "key_vault_name=$KV_NAME"    >> $GITHUB_OUTPUT
+          echo "### Shared outputs" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource | Name |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|------|" >> $GITHUB_STEP_SUMMARY
+          echo "| ACR | \`$ACR_NAME\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Key Vault | \`$KV_NAME\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> Update GitHub Secrets **ACR_NAME** and **KEY_VAULT_NAME** with the values above." >> $GITHUB_STEP_SUMMARY
+
+      - name: Job summary
+        if: always()
+        run: |
+          echo "### Azure Shared — Apply" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| RG | my-Rental-App (permanent) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Apply | ${{ steps.apply.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Actor | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+
+  # ===========================================================================
   # AZURE — Plan
   # Runs terraform plan, detects destroys, uploads plan binary as artifact.
+  # Skipped entirely when action=destroy (no plan needed before destroy).
   # ===========================================================================
   azure_plan:
     name: "Azure Plan / ${{ needs.setup.outputs.env }}"
     runs-on: ubuntu-latest
     needs: setup
-    if: needs.setup.outputs.run_azure == 'true'
+    if: |
+      needs.setup.outputs.run_azure == 'true' &&
+      needs.setup.outputs.action != 'destroy'
 
     outputs:
       has_destroys:  ${{ steps.check_destroys.outputs.has_destroys }}
@@ -165,14 +413,15 @@ jobs:
         working-directory: infrastructure/azure/environments/${{ needs.setup.outputs.env }}
 
     env:
-      ARM_USE_OIDC:        "false"
+      ARM_USE_OIDC:        "true"
       ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
-      ARM_CLIENT_SECRET:   ${{ secrets.AZURE_CLIENT_SECRET }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_resource_group_name: ${{ secrets.TF_BACKEND_RG }}
-      TF_VAR_subscription_id:    ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_cicd_sp_object_id:  ${{ secrets.AZURE_SP_OBJECT_ID }}
+      TF_VAR_subscription_id:            ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_env_resource_group_name:    ${{ needs.setup.outputs.env_rg }}
+      TF_VAR_shared_resource_group_name: ${{ secrets.TF_SHARED_RG }}
+      TF_VAR_acr_name:                   ${{ secrets.ACR_NAME }}
+      TF_VAR_key_vault_name:             ${{ secrets.KEY_VAULT_NAME }}
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -183,14 +432,12 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: true
 
-      - name: Azure CLI login
-        run: |
-          az login --service-principal \
-            --username "$ARM_CLIENT_ID" \
-            --password "$ARM_CLIENT_SECRET" \
-            --tenant  "$ARM_TENANT_ID" \
-            --output none
-          az account set --subscription "$ARM_SUBSCRIPTION_ID"
+      - name: Azure OIDC login
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Terraform fmt check
         id: fmt
@@ -211,23 +458,20 @@ jobs:
 
       - name: Terraform plan
         id: plan
-        if: needs.setup.outputs.action != 'destroy'
         run: terraform plan -out=tfplan.binary -no-color 2>&1 | tee plan.txt
         continue-on-error: true
 
       - name: Convert plan to JSON
-        if: needs.setup.outputs.action != 'destroy'
         run: terraform show -json tfplan.binary > tfplan.json
 
-      # ── Infracost cost estimate ───────────────────────────────────────────────
+      # ── Infracost cost estimate ─────────────────────────────────────────────
       - name: Install infracost
-        if: needs.setup.outputs.action != 'destroy'
         run: |
           curl -fsSL https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh
 
       - name: Infracost breakdown
         id: infracost
-        if: needs.setup.outputs.action != 'destroy' && env.INFRACOST_API_KEY != ''
+        if: env.INFRACOST_API_KEY != ''
         env:
           INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
         run: |
@@ -236,13 +480,11 @@ jobs:
             --format json \
             --out-file infracost.json
 
-          # Print human-readable summary to step log
           infracost output \
             --path infracost.json \
             --format table \
             --show-all-resources
 
-          # Extract total for summary
           TOTAL=$(jq -r '.totalMonthlyCost // "N/A"' infracost.json)
           echo "total_monthly_cost=$TOTAL" >> $GITHUB_OUTPUT
           echo "### Infracost estimate" >> $GITHUB_STEP_SUMMARY
@@ -252,16 +494,15 @@ jobs:
           echo "| Budget (weekly) | \$5 (~400 INR) |" >> $GITHUB_STEP_SUMMARY
         continue-on-error: true
 
-      # ── OPA cost guard (runs on infracost JSON output) ────────────────────────
+      # ── OPA cost guard ──────────────────────────────────────────────────────
       - name: Install conftest
-        if: needs.setup.outputs.action != 'destroy'
         run: |
           curl -sL https://github.com/open-policy-agent/conftest/releases/download/v0.50.0/conftest_0.50.0_Linux_x86_64.tar.gz | tar xz
           sudo mv conftest /usr/local/bin/
 
-      - name: OPA cost guard (infracost)
+      - name: OPA cost guard
         id: opa_cost
-        if: needs.setup.outputs.action != 'destroy' && hashFiles('infracost.json') != ''
+        if: hashFiles('infracost.json') != ''
         run: |
           conftest test infracost.json \
             --policy ../../../../platform/security/policies/cost/cost_guard.rego \
@@ -270,11 +511,9 @@ jobs:
           cat opa-cost-results.txt >> $GITHUB_STEP_SUMMARY
         continue-on-error: true
 
-      # Detect any delete or replace (delete+create) operations in the plan.
-      # Contains(["delete"]) matches both pure deletes and delete+create replacements.
+      # Detect any delete or replace operations in the plan.
       - name: Detect destructive changes
         id: check_destroys
-        if: needs.setup.outputs.action != 'destroy'
         run: |
           DESTROY_COUNT=$(jq '[.resource_changes[] | select(.change.actions | contains(["delete"]))] | length' tfplan.json)
           DESTROY_LIST=$(jq -r '
@@ -299,7 +538,6 @@ jobs:
             echo "destroy_list=none"  >> $GITHUB_OUTPUT
           fi
 
-      # Upload plan binary so azure_apply can apply the EXACT approved plan.
       - name: Upload plan artifact
         if: needs.setup.outputs.action == 'apply' && steps.plan.outcome == 'success'
         uses: actions/upload-artifact@v4
@@ -309,8 +547,8 @@ jobs:
           retention-days: 1
 
       - name: Post plan as PR comment
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
         if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
         with:
           script: |
             const fs = require('fs');
@@ -320,7 +558,7 @@ jobs:
             const icon = s => s === 'success' ? 'OK' : s === 'failure' ? 'FAIL' : 'SKIP';
             const hasDestroys = '${{ steps.check_destroys.outputs.has_destroys }}' === 'true';
             const destroyBadge = hasDestroys
-              ? '\n> ⚠️ **${{ steps.check_destroys.outputs.destroy_count }} resource(s) will be DESTROYED — manual approval required before apply**\n'
+              ? '\n> ⚠️ **${{ steps.check_destroys.outputs.destroy_count }} resource(s) will be DESTROYED — approval required**\n'
               : '';
             const costEst = '${{ steps.infracost.outputs.total_monthly_cost }}';
             const costLine = costEst ? `\n| Infracost estimate | \$${costEst}/month |` : '';
@@ -346,24 +584,28 @@ jobs:
   # ===========================================================================
   # AZURE — Approve (destruction gate)
   #
-  # Triggered when:
-  #   • action=apply  AND the plan contains at least one resource deletion/replace
-  #   • action=destroy (always — the entire environment will be torn down)
+  # Fires when:
+  #   • manual destroy (any scope, any env)
+  #   • manual apply with resource deletions in plan
   #
-  # The "terraform-destructive-approval" GitHub Environment must have required
-  # reviewers configured: repo Settings → Environments → Add reviewer.
-  # The pipeline pauses here until a reviewer clicks "Approve" in the UI.
+  # Skipped for:
+  #   • scheduled runs (no one to approve)
+  #   • plan-only runs
   # ===========================================================================
   azure_approve:
-    name: "⚠️ Approve destructive changes — Azure ${{ needs.setup.outputs.env }}"
+    name: "⚠️ Approve — Azure ${{ needs.setup.outputs.env }} ${{ needs.setup.outputs.action }} (${{ needs.setup.outputs.scope }})"
     runs-on: ubuntu-latest
     needs: [setup, azure_plan]
     if: |
+      needs.setup.outputs.scheduled == 'false' &&
       needs.setup.outputs.run_azure == 'true' &&
-      needs.azure_plan.result == 'success' &&
       (
         needs.setup.outputs.action == 'destroy' ||
-        (needs.setup.outputs.action == 'apply' && needs.azure_plan.outputs.has_destroys == 'true')
+        (
+          needs.setup.outputs.action == 'apply' &&
+          needs.azure_plan.result == 'success' &&
+          needs.azure_plan.outputs.has_destroys == 'true'
+        )
       )
     environment: terraform-destructive-approval
 
@@ -371,26 +613,36 @@ jobs:
       - name: Summarise what will be destroyed
         run: |
           echo "============================================================"
-          echo "  ⚠️  DESTRUCTIVE TERRAFORM CHANGES — Azure ${{ needs.setup.outputs.env }}"
+          echo "  ⚠️  DESTRUCTIVE OPERATION — Azure ${{ needs.setup.outputs.env }}"
           echo "============================================================"
+          echo "  Action : ${{ needs.setup.outputs.action }}"
+          echo "  Scope  : ${{ needs.setup.outputs.scope }}"
           if [ "${{ needs.setup.outputs.action }}" = "destroy" ]; then
-            echo "  Action : DESTROY"
-            echo "  Impact : The ENTIRE ${{ needs.setup.outputs.env }} environment will be torn down."
+            if [ "${{ needs.setup.outputs.scope }}" = "compute-only" ]; then
+              echo ""
+              echo "  Destroying: AKS, load balancer, VNet, subnets"
+              echo "  Keeping:    ACR, SQL Database, Key Vault, Storage Account"
+              echo "  → Compute billing stops. Data and images are preserved."
+            else
+              echo ""
+              echo "  Destroying: ALL resources in ${{ needs.setup.outputs.env }}"
+              echo "  WARNING:    SQL data, container images, and secrets will be DELETED."
+            fi
           else
-            echo "  Action  : apply"
-            echo "  Destroys: ${{ needs.azure_plan.outputs.destroy_count }} resource(s)"
+            echo "  Destroys in plan: ${{ needs.azure_plan.outputs.destroy_count }} resource(s)"
             echo ""
             echo "${{ needs.azure_plan.outputs.destroy_list }}"
           fi
           echo "============================================================"
-          echo "  Approve this step in the GitHub Actions UI to proceed."
+          echo "  Click Approve in the GitHub Actions UI to proceed."
           echo "============================================================"
 
   # ===========================================================================
   # AZURE — Apply / Destroy
   #
-  # Runs after azure_approve succeeds (or is skipped when no destroys).
-  # Apply uses the saved plan binary — what was reviewed is exactly what runs.
+  # Apply:   uses saved plan binary (exact approved plan)
+  # Destroy: compute-only → targeted -target flags
+  #          full         → terraform destroy -auto-approve
   # ===========================================================================
   azure_apply:
     name: "Azure ${{ needs.setup.outputs.action == 'destroy' && 'Destroy' || 'Apply' }} / ${{ needs.setup.outputs.env }}"
@@ -400,7 +652,7 @@ jobs:
       always() &&
       needs.setup.outputs.run_azure == 'true' &&
       needs.setup.outputs.action != 'plan' &&
-      needs.azure_plan.result == 'success' &&
+      (needs.azure_plan.result == 'success' || needs.azure_plan.result == 'skipped') &&
       (needs.azure_approve.result == 'success' || needs.azure_approve.result == 'skipped')
 
     defaults:
@@ -408,14 +660,15 @@ jobs:
         working-directory: infrastructure/azure/environments/${{ needs.setup.outputs.env }}
 
     env:
-      ARM_USE_OIDC:        "false"
+      ARM_USE_OIDC:        "true"
       ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
-      ARM_CLIENT_SECRET:   ${{ secrets.AZURE_CLIENT_SECRET }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_resource_group_name: ${{ secrets.TF_BACKEND_RG }}
-      TF_VAR_subscription_id:    ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_cicd_sp_object_id:  ${{ secrets.AZURE_SP_OBJECT_ID }}
+      TF_VAR_subscription_id:            ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_env_resource_group_name:    ${{ needs.setup.outputs.env_rg }}
+      TF_VAR_shared_resource_group_name: ${{ secrets.TF_SHARED_RG }}
+      TF_VAR_acr_name:                   ${{ secrets.ACR_NAME }}
+      TF_VAR_key_vault_name:             ${{ secrets.KEY_VAULT_NAME }}
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -426,14 +679,12 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: true
 
-      - name: Azure CLI login
-        run: |
-          az login --service-principal \
-            --username "$ARM_CLIENT_ID" \
-            --password "$ARM_CLIENT_SECRET" \
-            --tenant  "$ARM_TENANT_ID" \
-            --output none
-          az account set --subscription "$ARM_SUBSCRIPTION_ID"
+      - name: Azure OIDC login
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Terraform init
         run: |
@@ -442,7 +693,6 @@ jobs:
             -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
             -backend-config="container_name=${{ secrets.TF_BACKEND_CONTAINER }}"
 
-      # Download the plan approved in azure_plan so apply runs the exact same changes.
       - name: Download approved plan
         if: needs.setup.outputs.action == 'apply'
         uses: actions/download-artifact@v4
@@ -451,12 +701,39 @@ jobs:
           path: infrastructure/azure/environments/${{ needs.setup.outputs.env }}
 
       - name: Terraform apply
+        id: apply
         if: needs.setup.outputs.action == 'apply'
         run: terraform apply -no-color tfplan.binary
 
-      - name: Terraform destroy
-        if: needs.setup.outputs.action == 'destroy'
+      - name: Terraform destroy (compute-only)
+        id: destroy_compute
+        if: |
+          needs.setup.outputs.action == 'destroy' &&
+          needs.setup.outputs.scope == 'compute-only'
+        run: |
+          terraform destroy -auto-approve -no-color \
+            -target=module.aks \
+            -target=module.load_balancer \
+            -target=module.security_group \
+            -target=module.subnet \
+            -target=module.vnet
+
+      - name: Terraform destroy (full)
+        id: destroy_full
+        if: |
+          needs.setup.outputs.action == 'destroy' &&
+          needs.setup.outputs.scope == 'full'
         run: terraform destroy -auto-approve -no-color
+
+      - name: Notify Discord
+        if: always() && env.DISCORD_WEBHOOK != ''
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        uses: Ilshidur/action-discord@d2594079a10f1d6739ee50a2471f0ca57418b554
+        with:
+          args: |
+            ${{ (steps.apply.outcome == 'success' || steps.destroy_compute.outcome == 'success' || steps.destroy_full.outcome == 'success') && '✅' || '❌' }} **Azure ${{ needs.setup.outputs.env }} — ${{ needs.setup.outputs.action }}** (${{ needs.setup.outputs.scope }})
+            Trigger: `${{ github.event_name }}` | Actor: `${{ github.actor }}` | Commit: `${{ github.sha }}`
 
       - name: Job summary
         if: always()
@@ -466,8 +743,15 @@ jobs:
           echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Env | ${{ needs.setup.outputs.env }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Action | ${{ needs.setup.outputs.action }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Scope | ${{ needs.setup.outputs.scope }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trigger | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Actor | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.setup.outputs.action }}" = "destroy" ] && [ "${{ needs.setup.outputs.scope }}" = "compute-only" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Kept:** ACR | SQL Database | Key Vault | Storage Account" >> $GITHUB_STEP_SUMMARY
+            echo "**Re-deploy:** trigger this workflow → action=apply" >> $GITHUB_STEP_SUMMARY
+          fi
 
   # ===========================================================================
   # GCP — Plan
@@ -476,7 +760,9 @@ jobs:
     name: "GCP Plan / ${{ needs.setup.outputs.env }}"
     runs-on: ubuntu-latest
     needs: setup
-    if: needs.setup.outputs.run_gcp == 'true'
+    if: |
+      needs.setup.outputs.run_gcp == 'true' &&
+      needs.setup.outputs.action != 'destroy'
 
     outputs:
       has_destroys:  ${{ steps.check_destroys.outputs.has_destroys }}
@@ -520,17 +806,14 @@ jobs:
 
       - name: Terraform plan
         id: plan
-        if: needs.setup.outputs.action != 'destroy'
         run: terraform plan -out=tfplan.binary -no-color 2>&1 | tee plan.txt
         continue-on-error: true
 
       - name: Convert plan to JSON
-        if: needs.setup.outputs.action != 'destroy'
         run: terraform show -json tfplan.binary > tfplan.json
 
       - name: Detect destructive changes
         id: check_destroys
-        if: needs.setup.outputs.action != 'destroy'
         run: |
           DESTROY_COUNT=$(jq '[.resource_changes[] | select(.change.actions | contains(["delete"]))] | length' tfplan.json)
           DESTROY_LIST=$(jq -r '
@@ -577,18 +860,22 @@ jobs:
 
   # ===========================================================================
   # GCP — Approve (destruction gate)
-  # Same logic as azure_approve — uses the same shared environment.
+  # Same conditions as azure_approve — shared environment.
   # ===========================================================================
   gcp_approve:
-    name: "⚠️ Approve destructive changes — GCP ${{ needs.setup.outputs.env }}"
+    name: "⚠️ Approve — GCP ${{ needs.setup.outputs.env }} ${{ needs.setup.outputs.action }} (${{ needs.setup.outputs.scope }})"
     runs-on: ubuntu-latest
     needs: [setup, gcp_plan]
     if: |
+      needs.setup.outputs.scheduled == 'false' &&
       needs.setup.outputs.run_gcp == 'true' &&
-      needs.gcp_plan.result == 'success' &&
       (
         needs.setup.outputs.action == 'destroy' ||
-        (needs.setup.outputs.action == 'apply' && needs.gcp_plan.outputs.has_destroys == 'true')
+        (
+          needs.setup.outputs.action == 'apply' &&
+          needs.gcp_plan.result == 'success' &&
+          needs.gcp_plan.outputs.has_destroys == 'true'
+        )
       )
     environment: terraform-destructive-approval
 
@@ -596,19 +883,28 @@ jobs:
       - name: Summarise what will be destroyed
         run: |
           echo "============================================================"
-          echo "  ⚠️  DESTRUCTIVE TERRAFORM CHANGES — GCP ${{ needs.setup.outputs.env }}"
+          echo "  ⚠️  DESTRUCTIVE OPERATION — GCP ${{ needs.setup.outputs.env }}"
           echo "============================================================"
+          echo "  Action : ${{ needs.setup.outputs.action }}"
+          echo "  Scope  : ${{ needs.setup.outputs.scope }}"
           if [ "${{ needs.setup.outputs.action }}" = "destroy" ]; then
-            echo "  Action : DESTROY"
-            echo "  Impact : The ENTIRE ${{ needs.setup.outputs.env }} environment will be torn down."
+            if [ "${{ needs.setup.outputs.scope }}" = "compute-only" ]; then
+              echo ""
+              echo "  Destroying: GKE cluster, Cloud NAT, VPC, subnets"
+              echo "  Keeping:    Artifact Registry, Cloud SQL, Secret Manager"
+              echo "  → Compute billing stops. Data and images are preserved."
+            else
+              echo ""
+              echo "  Destroying: ALL GCP resources in ${{ needs.setup.outputs.env }}"
+              echo "  WARNING:    Cloud SQL data and container images will be DELETED."
+            fi
           else
-            echo "  Action  : apply"
-            echo "  Destroys: ${{ needs.gcp_plan.outputs.destroy_count }} resource(s)"
+            echo "  Destroys in plan: ${{ needs.gcp_plan.outputs.destroy_count }} resource(s)"
             echo ""
             echo "${{ needs.gcp_plan.outputs.destroy_list }}"
           fi
           echo "============================================================"
-          echo "  Approve this step in the GitHub Actions UI to proceed."
+          echo "  Click Approve in the GitHub Actions UI to proceed."
           echo "============================================================"
 
   # ===========================================================================
@@ -622,7 +918,7 @@ jobs:
       always() &&
       needs.setup.outputs.run_gcp == 'true' &&
       needs.setup.outputs.action != 'plan' &&
-      needs.gcp_plan.result == 'success' &&
+      (needs.gcp_plan.result == 'success' || needs.gcp_plan.result == 'skipped') &&
       (needs.gcp_approve.result == 'success' || needs.gcp_approve.result == 'skipped')
 
     defaults:
@@ -658,12 +954,37 @@ jobs:
           path: infrastructure/gcp/environments/${{ needs.setup.outputs.env }}
 
       - name: Terraform apply
+        id: apply
         if: needs.setup.outputs.action == 'apply'
         run: terraform apply -no-color tfplan.binary
 
-      - name: Terraform destroy
-        if: needs.setup.outputs.action == 'destroy'
+      - name: Terraform destroy (compute-only)
+        id: destroy_compute
+        if: |
+          needs.setup.outputs.action == 'destroy' &&
+          needs.setup.outputs.scope == 'compute-only'
+        run: |
+          terraform destroy -auto-approve -no-color \
+            -target=module.gke \
+            -target=module.nat \
+            -target=module.vpc
+
+      - name: Terraform destroy (full)
+        id: destroy_full
+        if: |
+          needs.setup.outputs.action == 'destroy' &&
+          needs.setup.outputs.scope == 'full'
         run: terraform destroy -auto-approve -no-color
+
+      - name: Notify Discord
+        if: always() && env.DISCORD_WEBHOOK != ''
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        uses: Ilshidur/action-discord@d2594079a10f1d6739ee50a2471f0ca57418b554
+        with:
+          args: |
+            ${{ (steps.apply.outcome == 'success' || steps.destroy_compute.outcome == 'success' || steps.destroy_full.outcome == 'success') && '✅' || '❌' }} **GCP ${{ needs.setup.outputs.env }} — ${{ needs.setup.outputs.action }}** (${{ needs.setup.outputs.scope }})
+            Trigger: `${{ github.event_name }}` | Actor: `${{ github.actor }}` | Commit: `${{ github.sha }}`
 
       - name: Job summary
         if: always()
@@ -673,5 +994,12 @@ jobs:
           echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Env | ${{ needs.setup.outputs.env }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Action | ${{ needs.setup.outputs.action }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Scope | ${{ needs.setup.outputs.scope }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trigger | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Actor | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.setup.outputs.action }}" = "destroy" ] && [ "${{ needs.setup.outputs.scope }}" = "compute-only" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Kept:** Artifact Registry | Cloud SQL | Secret Manager" >> $GITHUB_STEP_SUMMARY
+            echo "**Re-deploy:** trigger this workflow → action=apply" >> $GITHUB_STEP_SUMMARY
+          fi

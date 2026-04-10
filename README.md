@@ -1,6 +1,6 @@
 # rentalAppLedger — Platform Repository
 
-Cloud-native, AI-augmented rental property management platform. This repository contains the **platform layer**: infrastructure as code, Kubernetes manifests, GitOps configuration, security policies, observability, and AI tooling. The Django REST API lives in the companion `RentalApp-Build` repo.
+Cloud-native, AI-augmented rental property management platform. This repository contains the **platform layer**: infrastructure as code, Kubernetes manifests, GitOps configuration, security policies, observability, and AI tooling. The Django REST API lives in the companion [RentalApp-Build](https://github.com/techwizard-platformlab/RentalApp-Build) repo.
 
 ---
 
@@ -130,25 +130,62 @@ The script creates the Service Principal / Workload Identity and prints all requ
 ```
 GitHub → Settings → Secrets and variables → Actions
 
-Azure:  AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
-        TF_BACKEND_RG, TF_BACKEND_SA
+# Azure OIDC (no client secret — uses Managed Identity + federated credentials)
+AZURE_CLIENT_ID          # Managed Identity client ID
+AZURE_TENANT_ID          # Azure AD tenant ID
+AZURE_SUBSCRIPTION_ID    # Subscription ID
 
-GCP:    GCP_PROJECT_ID, GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT
+# Terraform state backend (in my-Rental-App)
+TF_BACKEND_RG            # Storage Account resource group  (my-Rental-App)
+TF_BACKEND_SA            # Storage Account name
+TF_BACKEND_CONTAINER     # Blob container name (e.g. tfstate)
 
-Notifications:  DISCORD_WEBHOOK_URL, SMTP_PASSWORD, MAIL_TO
+# Shared permanent layer (obtained after first azure_shared_apply run)
+TF_SHARED_RG             # Permanent resource group name   (my-Rental-App)
+ACR_NAME                 # Azure Container Registry name   (output of shared Terraform)
+KEY_VAULT_NAME           # Key Vault name                  (output of shared Terraform)
 
-App (RentalApp-Build): ACR_NAME, ACR_LOGIN_SERVER, DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
-                       GROQ_API_KEY, ANTHROPIC_API_KEY (optional, AI features)
+# GCP OIDC
+GCP_PROJECT_ID, GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT
+
+# Notifications
+DISCORD_WEBHOOK_URL, SMTP_PASSWORD, MAIL_TO
+```
+
+**RentalApp-Build repo** (`techwizard-platformlab/RentalApp-Build` → Settings → Secrets):
+
+```
+AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+ACR_NAME, ACR_LOGIN_SERVER
+DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
+GROQ_API_KEY, ANTHROPIC_API_KEY   # optional — AI features
 ```
 
 ### 3 — Provision infrastructure
 
+First run — provision the **shared layer** (ACR + Key Vault, runs once):
+
+```
+GitHub → Actions → terraform.yml
+  cloud: azure
+  action: apply    → approve in "shared" Environment gate
+           ↳ captures ACR_NAME and KEY_VAULT_NAME — save these as GitHub Secrets
+```
+
+Then provision the **env layer** (AKS, SQL, VNet, etc.):
+
 ```
 GitHub → Actions → terraform.yml
   cloud: azure (or gcp / both)
+  target_env: dev
   action: plan     → review output
-  action: apply    → approve in GitHub Environments gate
+  action: apply    → approve in "terraform-destructive-approval" gate (if deletions detected)
 ```
+
+> **GitHub Environments to create** (repo → Settings → Environments):
+> - `shared` — add yourself as required reviewer (protects ACR + Key Vault)
+> - `terraform-destructive-approval` — add yourself as required reviewer (protects apply/destroy with deletions)
+> - `dev`, `qa` — optional, for environment-scoped OIDC federation
 
 ### 4 — Bootstrap ArgoCD + deploy apps
 

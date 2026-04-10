@@ -1,7 +1,9 @@
 output "vnet_id"              { value = module.vnet.id }
 output "aks_name"             { value = module.aks.name }
-output "acr_login_server"     { value = module.acr.login_server }
-output "keyvault_uri"         { value = module.keyvault.vault_uri }
+output "acr_name"             { value = data.azurerm_container_registry.shared.name }
+output "acr_login_server"     { value = data.azurerm_container_registry.shared.login_server }
+output "key_vault_name"       { value = data.azurerm_key_vault.shared.name }
+output "key_vault_uri"        { value = data.azurerm_key_vault.shared.vault_uri }
 output "lb_public_ip"         { value = module.load_balancer.public_ip_address }
 output "storage_account_name" { value = module.storage_account.name }
 output "sql_server_fqdn"      { value = module.sql_database.fqdn }

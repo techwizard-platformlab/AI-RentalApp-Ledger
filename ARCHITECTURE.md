@@ -51,7 +51,8 @@ The project is split into two repositories with clearly separated concerns:
 
 ```
 ┌─────────────────────────────────┐    ┌─────────────────────────────────────┐
-│  RentalApp-Build (App Repo)     │    │  AI-RentalApp-Ledger (Platform Repo) │
+│  techwizard-platformlab/        │    │  techwizard-platformlab/             │
+│  RentalApp-Build  (App Repo)    │    │  AI-RentalApp-Ledger (Platform Repo) │
 │                                 │    │                                      │
 │  Django REST API                │    │  Terraform (Azure / GCP)             │
 │  Business logic                 │    │  Kubernetes manifests (GitOps)       │
@@ -175,7 +176,7 @@ AI-RentalApp-Ledger/
 
 The core business logic service. Built with Django 5.2 + Django REST Framework.
 
-**Repository:** `RentalApp-Build`
+**Repository:** [techwizard-platformlab/RentalApp-Build](https://github.com/techwizard-platformlab/RentalApp-Build)
 **Runtime:** Python 3.12, Gunicorn, Alpine Linux
 **Port:** 8000
 
@@ -520,7 +521,7 @@ infrastructure/gcp/environments/
 Developer commits code
         │
         ▼
-RentalApp-Build CI (GitHub Actions)
+techwizard-platformlab/RentalApp-Build CI (GitHub Actions)
   1. Pylint + Bandit + Django checks
   2. pytest + coverage
   3. SonarQube scan
@@ -548,7 +549,7 @@ Discord notification → #deployments
 ### ArgoCD Configuration
 
 **AppProject `rental-ledger`:**
-- Allowed source: `github.com/Ramprasath26/AI-RentalApp-Ledger`
+- Allowed source: `github.com/techwizard-platformlab/AI-RentalApp-Ledger`
 - Allowed destinations: `rental-dev`, `rental-qa` namespaces (AKS + GKE)
 - Allowed resources: Namespace, Deployment, Service, Ingress, HPA, ConfigMap
 
@@ -672,7 +673,7 @@ Internet
 
 ## 10. CI/CD Pipelines
 
-### RentalApp-Build Workflows
+### techwizard-platformlab/RentalApp-Build Workflows
 
 ```
 ci.yml (workflow_dispatch)
@@ -803,7 +804,7 @@ ci.yml (workflow_dispatch)
 5. Rate limiter prevents abuse (10 QPM per user)
 
 ### UC-06: Developer Deploys New Feature
-1. Developer pushes to `main` branch of RentalApp-Build
+1. Developer pushes to `main` branch of techwizard-platformlab/RentalApp-Build
 2. CI runs: pylint → bandit → Django check → pytest → SonarQube
 3. Docker image built, pushed to ACR + DockerHub, signed with cosign
 4. ArgoCD Image Updater detects new image tag in ACR
