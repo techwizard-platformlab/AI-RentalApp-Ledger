@@ -27,7 +27,7 @@ spec:
   project: rental-ledger
 
   source:
-    repoURL: "https://github.com/Ramprasath26/AI-RentalApp-Ledger"
+    repoURL: "https://github.com/techwizard-platformlab/AI-RentalApp-Ledger"
     targetRevision: qa            # track the qa branch
     path: platform/kubernetes/overlays/qa
 

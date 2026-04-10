@@ -35,7 +35,7 @@ locals {
   tags = {
     env     = local.env
     project = "rentalAppLedger"
-    owner   = "Ramprasath26"
+    owner   = "techwizard-platformlab"
   }
 }
 

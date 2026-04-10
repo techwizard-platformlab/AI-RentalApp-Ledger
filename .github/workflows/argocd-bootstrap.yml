@@ -328,8 +328,8 @@ jobs:
           kubectl create secret generic argocd-repo-ai-rentalapp-ledger \
             --namespace "${{ env.NAMESPACE_ARGOCD }}" \
             --from-literal=type=git \
-            --from-literal=url=https://github.com/Ramprasath26/AI-RentalApp-Ledger \
-            --from-literal=username=Ramprasath26 \
+            --from-literal=url=https://github.com/techwizard-platformlab/AI-RentalApp-Ledger \
+            --from-literal=username=techwizard-platformlab \
             --from-literal=password="${{ secrets.ARGOCD_GITHUB_PAT }}" \
             --dry-run=client -o json \
           | jq '.metadata.labels["argocd.argoproj.io/secret-type"] = "repository"' \
@@ -386,5 +386,5 @@ jobs:
           echo "1. Open https://${{ steps.argocd_ip.outputs.ip }} in your browser (accept cert warning)" >> "$GITHUB_STEP_SUMMARY"
           echo "2. Login with admin / password above" >> "$GITHUB_STEP_SUMMARY"
           echo "3. GitOps repo is already registered — app should show Synced" >> "$GITHUB_STEP_SUMMARY"
-          echo "4. Run the CI workflow (Ramprasath26/RentalApp-Build) with registry: acr to push the first image" >> "$GITHUB_STEP_SUMMARY"
+          echo "4. Run the CI workflow (techwizard-platformlab/RentalApp-Build) with registry: acr to push the first image" >> "$GITHUB_STEP_SUMMARY"
           echo "5. ArgoCD will auto-sync and deploy the app" >> "$GITHUB_STEP_SUMMARY"
