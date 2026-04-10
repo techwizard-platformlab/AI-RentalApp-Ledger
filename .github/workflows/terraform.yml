@@ -8,7 +8,7 @@ name: "Infra"
 #   schedule          → automated dev lifecycle (Saturday apply, Sunday destroy)
 #
 # Actions
-#   plan    → terraform plan + infracost estimate + OPA cost guard
+#   plan    → terraform plan + OPA cost check (tf_plan_cost.rego)
 #   apply   → uses saved plan binary (exact approved plan)
 #   destroy → compute-only (AKS/GKE + VNet, keeps ACR/SQL/KV) or full
 #
@@ -464,52 +464,43 @@ jobs:
       - name: Convert plan to JSON
         run: terraform show -json tfplan.binary > tfplan.json
 
-      # ── Infracost cost estimate ─────────────────────────────────────────────
-      - name: Install infracost
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh
-
-      - name: Infracost breakdown
-        id: infracost
-        if: env.INFRACOST_API_KEY != ''
-        env:
-          INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
-        run: |
-          infracost breakdown \
-            --path tfplan.json \
-            --format json \
-            --out-file infracost.json
-
-          infracost output \
-            --path infracost.json \
-            --format table \
-            --show-all-resources
-
-          TOTAL=$(jq -r '.totalMonthlyCost // "N/A"' infracost.json)
-          echo "total_monthly_cost=$TOTAL" >> $GITHUB_OUTPUT
-          echo "### Infracost estimate" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Monthly cost | \$$TOTAL |" >> $GITHUB_STEP_SUMMARY
-          echo "| Budget (weekly) | \$5 (~400 INR) |" >> $GITHUB_STEP_SUMMARY
-        continue-on-error: true
-
-      # ── OPA cost guard ──────────────────────────────────────────────────────
+      # ── OPA cost check (terraform plan JSON — no external API needed) ────────
       - name: Install conftest
         run: |
           curl -sL https://github.com/open-policy-agent/conftest/releases/download/v0.50.0/conftest_0.50.0_Linux_x86_64.tar.gz | tar xz
           sudo mv conftest /usr/local/bin/
 
-      - name: OPA cost guard
+      - name: OPA cost check
         id: opa_cost
-        if: hashFiles('infracost.json') != ''
         run: |
-          conftest test infracost.json \
-            --policy ../../../../platform/security/policies/cost/cost_guard.rego \
-            --output table | tee opa-cost-results.txt
-          echo "### OPA Cost Guard" >> $GITHUB_STEP_SUMMARY
-          cat opa-cost-results.txt >> $GITHUB_STEP_SUMMARY
-        continue-on-error: true
+          set +e
+          conftest test tfplan.json \
+            --namespace cost_tfplan \
+            --policy ../../../../platform/security/policies/cost/tf_plan_cost.rego \
+            --output json > opa-cost-result.json 2>&1
+          OPA_EXIT=$?
+          echo "exit_code=${OPA_EXIT}" >> "$GITHUB_OUTPUT"
+
+          echo "### OPA Cost Check" >> "$GITHUB_STEP_SUMMARY"
+          echo "Budget: \$22/month | Pattern: deploy-destroy (88 hrs/month)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          python3 - >> "$GITHUB_STEP_SUMMARY" <<'PYEOF'
+          import json
+          try:
+              data = json.load(open("opa-cost-result.json"))
+          except Exception:
+              print("_No result data_"); exit(0)
+          failures = [f for r in data for f in r.get("failures", [])]
+          warnings = [w for r in data for w in r.get("warnings", [])]
+          if failures:
+              print("**DENY**"); [print(f"> {f['msg']}") for f in failures]
+          if warnings:
+              print("**WARN**"); [print(f"> {w['msg']}") for w in warnings]
+          if not failures and not warnings:
+              print("Cost within budget.")
+          PYEOF
+          set -e
 
       # Detect any delete or replace operations in the plan.
       - name: Detect destructive changes
@@ -560,13 +551,12 @@ jobs:
             const destroyBadge = hasDestroys
               ? '\n> ⚠️ **${{ steps.check_destroys.outputs.destroy_count }} resource(s) will be DESTROYED — approval required**\n'
               : '';
-            const costEst = '${{ steps.infracost.outputs.total_monthly_cost }}';
-            const costLine = costEst ? `\n| Infracost estimate | \$${costEst}/month |` : '';
+            const opaStatus = '${{ steps.opa_cost.outputs.exit_code }}' === '0' ? 'OK' : 'FAIL';
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `## Azure \`${{ needs.setup.outputs.env }}\` Terraform Plan\n${destroyBadge}\n| Step | Status |\n|------|--------|\n| fmt | ${icon('${{ steps.fmt.outcome }}')} |\n| init | ${icon('${{ steps.init.outcome }}')} |\n| validate | ${icon('${{ steps.validate.outcome }}')} |\n| plan | ${icon('${{ steps.plan.outcome }}')} |\n| infracost | ${icon('${{ steps.infracost.outcome }}')} |\n| opa_cost | ${icon('${{ steps.opa_cost.outcome }}')} |${costLine}\n\`\`\`hcl\n${plan}\n\`\`\``
+              body: `## Azure \`${{ needs.setup.outputs.env }}\` Terraform Plan\n${destroyBadge}\n| Step | Status |\n|------|--------|\n| fmt | ${icon('${{ steps.fmt.outcome }}')} |\n| init | ${icon('${{ steps.init.outcome }}')} |\n| validate | ${icon('${{ steps.validate.outcome }}')} |\n| plan | ${icon('${{ steps.plan.outcome }}')} |\n| cost (OPA) | ${opaStatus} |\n\`\`\`hcl\n${plan}\n\`\`\``
             });
 
       - name: Job summary

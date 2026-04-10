@@ -53,14 +53,29 @@ locals {
   }
 }
 
+# ── Env resource group (Terraform-owned — destroyed with the environment) ─────
+resource "azurerm_resource_group" "env" {
+  name     = var.env_resource_group_name
+  location = var.location
+  tags     = local.tags
+}
+
 # ── Shared resource references (data sources — not managed here) ──────────────
-# ACR and Key Vault live in my-Rental-App (permanent), managed by infrastructure/azure/shared/
+# ACR and Key Vault live in my-Rental-App (permanent), managed by infrastructure/azure/shared/.
+# These data sources are conditional: skipped if the shared layer has not yet run
+# (i.e. acr_name / key_vault_name are empty on first bootstrap).
+locals {
+  shared_ready = var.acr_name != "" && var.key_vault_name != ""
+}
+
 data "azurerm_container_registry" "shared" {
+  count               = local.shared_ready ? 1 : 0
   name                = var.acr_name
   resource_group_name = var.shared_resource_group_name
 }
 
 data "azurerm_key_vault" "shared" {
+  count               = local.shared_ready ? 1 : 0
   name                = var.key_vault_name
   resource_group_name = var.shared_resource_group_name
 }
@@ -136,7 +151,7 @@ module "postgresql" {
   storage_mb          = var.postgresql_storage_mb
   storage_tier        = var.postgresql_storage_tier
   aks_subnet_cidr     = local.cfg.subnet_cidrs["aks"]
-  key_vault_id        = data.azurerm_key_vault.shared.id
+  key_vault_id        = local.shared_ready ? data.azurerm_key_vault.shared[0].id : null
   tags                = local.tags
 }
 
@@ -151,7 +166,7 @@ module "sql_database" {
   db_sku              = var.mssql_sku
   max_size_gb         = var.mssql_max_size_gb
   aks_subnet_cidr     = local.cfg.subnet_cidrs["aks"]
-  key_vault_name      = data.azurerm_key_vault.shared.name
+  key_vault_name      = local.shared_ready ? data.azurerm_key_vault.shared[0].name : null
   tags                = local.tags
 }
 
@@ -169,10 +184,10 @@ module "storage_account" {
 
 # ── Cost management ───────────────────────────────────────────────────────────
 module "budget" {
-  source              = "../../modules/budget"
-  environment         = local.env
-  resource_group_name = var.env_resource_group_name
-  monthly_budget_usd  = 22
-  budget_start_date   = "2026-04-01T00:00:00Z"
-  alert_emails        = var.alert_emails
+  source             = "../../modules/budget"
+  environment        = local.env
+  resource_group_id  = azurerm_resource_group.env.id
+  monthly_budget_usd = 22
+  budget_start_date  = "2026-04-01T00:00:00Z"
+  alert_emails       = var.alert_emails
 }

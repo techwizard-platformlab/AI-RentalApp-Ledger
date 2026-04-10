@@ -3,8 +3,8 @@ variable "environment" {
   type        = string
 }
 
-variable "resource_group_name" {
-  description = "Name of the resource group to apply the budget to"
+variable "resource_group_id" {
+  description = "Resource ID of the env resource group (e.g. azurerm_resource_group.env.id)"
   type        = string
 }
 

@@ -1,14 +1,13 @@
 # Azure Consumption Budget — Resource Group scope
 # Sends email alerts when monthly spend approaches or exceeds the configured limit.
 # Default: $22/month (~1840 INR) = $5/week × 4.33 weeks, with alerts at 70%, 90%, and 100%.
-
-data "azurerm_resource_group" "this" {
-  name = var.resource_group_name
-}
+#
+# resource_group_id is passed directly from the caller (azurerm_resource_group.env.id)
+# so this module does not need a data source lookup — safe to apply even on first run.
 
 resource "azurerm_consumption_budget_resource_group" "monthly" {
   name              = "${var.environment}-monthly-budget"
-  resource_group_id = data.azurerm_resource_group.this.id
+  resource_group_id = var.resource_group_id
 
   amount     = var.monthly_budget_usd
   time_grain = "Monthly"
