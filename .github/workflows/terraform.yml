@@ -587,7 +587,7 @@ jobs:
     if: |
       needs.setup.outputs.scheduled == 'false' &&
       needs.setup.outputs.run_azure == 'true' &&
-      needs.azure_plan.result == 'success' &&
+      (needs.azure_plan.result == 'success' || needs.azure_plan.result == 'skipped') &&
       (needs.setup.outputs.action == 'apply' || needs.setup.outputs.action == 'destroy')
     environment: ${{ (needs.azure_plan.outputs.has_destroys == 'true' || needs.setup.outputs.action == 'destroy') && 'terraform-destructive-approval' || 'shared' }}
 
