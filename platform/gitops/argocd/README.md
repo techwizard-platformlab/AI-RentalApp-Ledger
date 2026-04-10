@@ -1,72 +1,108 @@
-# GitOps Repository — rentalAppLedger
+# GitOps — ArgoCD Configuration
 
 ## Structure
 
 ```
-gitops/
+platform/gitops/argocd/
 ├── apps/
-│   ├── appproject.yaml          # AppProject CRD — scopes allowed repos/namespaces
-│   ├── app-dev.yaml             # Application CRD — auto-sync to rental-dev
-│   ├── app-qa.yaml              # Application CRD — manual sync to rental-qa
-│   └── notification-config.yaml # ArgoCD Notifications Discord config
-└── argocd/
-    └── install-values.yaml      # Helm values for ArgoCD install
+│   ├── appproject.yaml              # AppProject — scopes allowed repos/namespaces
+│   ├── app-dev.yaml                 # Application CRD — auto-sync to rental-dev
+│   ├── app-qa.yaml                  # Application CRD — manual sync to rental-qa
+│   ├── applicationset-multicluster.yaml  # Multi-cluster ApplicationSet (AKS + GKE)
+│   ├── health-check-config.yaml     # Custom health check rules
+│   └── notification-config.yaml     # ArgoCD Notifications — Discord triggers
+├── argocd/
+│   └── install-values.yaml          # Helm values for ArgoCD install
+├── helm/
+│   └── postgresql/
+│       └── values-dev.yaml          # Fallback in-cluster PostgreSQL (if not using Azure PG)
+└── notifications/
+    ├── argocd-notifications-cm.yaml # Notification templates + triggers ConfigMap
+    ├── argocd-notifications-secret.yaml  # Discord webhook secret template
+    └── app-notification-annotations.yaml # Per-app notification annotations
 ```
 
-## Bootstrap ArgoCD
+## Bootstrap via GitHub Actions (recommended)
+
+```
+GitHub → Actions → argocd-bootstrap.yml
+  environment: dev
+  action: install        ← installs ArgoCD via Helm
+  action: apply-apps     ← creates AppProject + Application CRDs
+```
+
+## Manual bootstrap
 
 ```bash
 # 1. Add Argo Helm repo
-helm repo add argo https://argoproj.github.io/argo-helm
-helm repo update
+helm repo add argo https://argoproj.github.io/argo-helm && helm repo update
 
-# 2. Install ArgoCD (minimal, single-replica)
+# 2. Install ArgoCD
 helm install argocd argo/argo-cd \
   -n argocd --create-namespace \
-  -f gitops/argocd/install-values.yaml
+  -f platform/gitops/argocd/argocd/install-values.yaml
 
 # 3. Get initial admin password
 kubectl -n argocd get secret argocd-initial-admin-secret \
-  -o jsonpath="{.data.password}" | base64 -d; echo
+  -o jsonpath="{.data.password}" | base64 -d && echo
 
 # 4. Apply AppProject + Applications
-kubectl apply -f gitops/apps/appproject.yaml
-kubectl apply -f gitops/apps/app-dev.yaml
-kubectl apply -f gitops/apps/app-qa.yaml
-kubectl apply -f gitops/apps/notification-config.yaml
+kubectl apply -f platform/gitops/argocd/apps/appproject.yaml
+kubectl apply -f platform/gitops/argocd/apps/app-dev.yaml
+kubectl apply -f platform/gitops/argocd/apps/app-qa.yaml
 
 # 5. Set Discord webhook secret
 kubectl create secret generic argocd-notifications-secret \
   -n argocd \
   --from-literal=discord-webhook-url="<your-discord-webhook-url>"
+
+# 6. Apply notification config
+kubectl apply -f platform/gitops/argocd/notifications/argocd-notifications-cm.yaml
 ```
 
 ## Image Updater
 
-ArgoCD Image Updater watches ACR/GCR for new image tags and commits updated
-image references back to the git repository (GitOps write-back pattern).
+ArgoCD Image Updater polls ACR for new image tags and commits updated
+image references back to `platform/kubernetes/overlays/dev/` (GitOps write-back).
 
 ```bash
 # Install Image Updater
 kubectl apply -n argocd \
   -f https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/stable/manifests/install.yaml
 
-# Configure ACR credentials (imagePullSecret)
+# Configure ACR credentials via Managed Identity (no client secret needed)
+# The AKS node pool identity is assigned AcrPull by the bootstrap script.
 kubectl create secret docker-registry acr-pull-secret \
   -n argocd \
-  --docker-server={ACR_NAME}.azurecr.io \
-  --docker-username=<sp-client-id> \
-  --docker-password=<sp-client-secret>
+  --docker-server=${ACR_NAME}.azurecr.io \
+  --docker-username=00000000-0000-0000-0000-000000000000 \
+  --docker-password=$(az acr login --name ${ACR_NAME} --expose-token --query accessToken -o tsv)
 ```
 
-## GitHub Environments / Branch Protection (recommended)
+## Image tag flow
 
-- Require PR before merging to `main`
-- Required status checks: `lint-and-test`, `security-scan`, `conftest`
-- At least 1 required reviewer for `qa` branch merges
+```
+RentalApp-Build CI
+  → docker build + push → ACR (tagged with git SHA)
+       │
+ArgoCD Image Updater (polls ACR every 2m)
+  → detects new tag
+  → commits updated kustomization.yaml to AI-RentalApp-Ledger
+       │
+ArgoCD auto-sync
+  → applies diff to AKS
+  → rolling update (readiness probe gates traffic)
+       │
+Discord notification → #deployments
+```
 
-## Passing image tag to ArgoCD
+## GitHub Environments (recommended)
 
-The CI pipeline (`ci-build.yml`) builds and pushes images tagged with the git SHA.
-ArgoCD Image Updater detects the new tag, updates `k8s/overlays/dev/kustomization.yaml`
-via a git commit, which triggers ArgoCD to sync the new image to the cluster.
+Create these in repo Settings → Environments:
+
+| Environment | Required reviewers | Purpose |
+|---|---|---|
+| `shared` | yourself | Protects ACR + Key Vault (shared Terraform) |
+| `terraform-destructive-approval` | yourself | Blocks apply/destroy with deletions |
+| `dev` | none | OIDC subject scoping for dev runs |
+| `qa` | yourself | Manual approval gate for QA deploys |

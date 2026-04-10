@@ -1,6 +1,7 @@
 # =============================================================================
 # Azure Database for PostgreSQL Flexible Server
-# SKU: Burstable B1ms — cheapest tier, suitable for dev environments.
+# SKU and storage are driven by var.sku_name / var.storage_mb — set per env
+# in terraform.tfvars. Default: B_Standard_B1ms (Burstable, lowest cost).
 # Public access with IP firewall rules (no VNet integration to keep it simple).
 # =============================================================================
 
@@ -30,10 +31,9 @@ resource "azurerm_postgresql_flexible_server" "this" {
   administrator_login    = var.db_admin_username
   administrator_password = random_password.db_admin.result
 
-  storage_mb   = 32768   # 32 GiB minimum
-  storage_tier = "P4"
-
-  sku_name = "B_Standard_B1ms"   # Burstable 1 vCore — lowest cost tier
+  storage_mb   = var.storage_mb
+  storage_tier = var.storage_tier
+  sku_name     = var.sku_name
 
   backup_retention_days        = 7
   geo_redundant_backup_enabled = false
@@ -105,6 +105,12 @@ resource "azurerm_key_vault_secret" "db_password" {
 resource "azurerm_key_vault_secret" "db_port" {
   name         = "db-port"
   value        = "5432"
+  key_vault_id = var.key_vault_id
+}
+
+resource "azurerm_key_vault_secret" "db_engine" {
+  name         = "db-engine"
+  value        = "django.db.backends.postgresql"
   key_vault_id = var.key_vault_id
 }
 

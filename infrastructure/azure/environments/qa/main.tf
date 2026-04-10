@@ -2,6 +2,11 @@
 # Azure QA environment
 # Mirrors dev with higher resource limits for load testing.
 #
+# Database engine — controlled by var.db_engine in terraform.tfvars:
+#   postgresql (default) → PostgreSQL Flexible Server (B_Standard_B1ms, ~$12/month)
+#   mssql                → Azure SQL Database (S1, ~$15/month)
+# Only one module is deployed; the other has count = 0.
+#
 # Does NOT manage: ACR, Key Vault (shared — see infrastructure/azure/shared/)
 # Resource group: my-Rental-App-QA (destroy-safe)
 # =============================================================================
@@ -100,15 +105,36 @@ module "load_balancer" {
 }
 
 # ── Data storage ──────────────────────────────────────────────────────────────
-# Azure SQL Database — S1 for QA load tests (20 DTUs, 250 GB)
-module "sql_database" {
-  source              = "../../modules/sql_database"
+# Exactly one database module is deployed, chosen by var.db_engine (terraform.tfvars).
+# Default: postgresql. To switch to Azure SQL set db_engine = "mssql" in tfvars.
+# Secrets are written to the shared Key Vault by each module.
+
+module "postgresql" {
+  count  = var.db_engine == "postgresql" ? 1 : 0
+  source = "../../modules/postgresql"
+
   environment         = local.env
   location            = var.location
   location_short      = local.location_short
   resource_group_name = var.env_resource_group_name
-  db_sku              = "S1"
-  max_size_gb         = 10
+  sku_name            = var.postgresql_sku
+  storage_mb          = var.postgresql_storage_mb
+  storage_tier        = var.postgresql_storage_tier
+  aks_subnet_cidr     = local.cfg.subnet_cidrs["aks"]
+  key_vault_id        = data.azurerm_key_vault.shared.id
+  tags                = local.tags
+}
+
+module "sql_database" {
+  count  = var.db_engine == "mssql" ? 1 : 0
+  source = "../../modules/sql_database"
+
+  environment         = local.env
+  location            = var.location
+  location_short      = local.location_short
+  resource_group_name = var.env_resource_group_name
+  db_sku              = var.mssql_sku
+  max_size_gb         = var.mssql_max_size_gb
   aks_subnet_cidr     = local.cfg.subnet_cidrs["aks"]
   key_vault_name      = data.azurerm_key_vault.shared.name
   tags                = local.tags

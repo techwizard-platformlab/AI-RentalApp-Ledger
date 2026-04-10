@@ -44,3 +44,46 @@ variable "alert_emails" {
   type        = list(string)
   default     = []
 }
+
+# ── Database engine selection ─────────────────────────────────────────────────
+variable "db_engine" {
+  description = "Database backend to deploy: 'postgresql' (default) or 'mssql'"
+  type        = string
+  default     = "postgresql"
+  validation {
+    condition     = contains(["postgresql", "mssql"], var.db_engine)
+    error_message = "db_engine must be 'postgresql' or 'mssql'."
+  }
+}
+
+# ── PostgreSQL Flexible Server sizing (used when db_engine = "postgresql") ────
+variable "postgresql_sku" {
+  description = "PostgreSQL Flexible Server SKU (e.g. B_Standard_B1ms, B_Standard_B2ms)"
+  type        = string
+  default     = "B_Standard_B1ms"
+}
+
+variable "postgresql_storage_mb" {
+  description = "PostgreSQL storage in MB (minimum 32768 = 32 GiB)"
+  type        = number
+  default     = 32768
+}
+
+variable "postgresql_storage_tier" {
+  description = "PostgreSQL storage tier (P4 for Burstable, P6 for General Purpose)"
+  type        = string
+  default     = "P4"
+}
+
+# ── Azure SQL Database sizing (used when db_engine = "mssql") ────────────────
+variable "mssql_sku" {
+  description = "Azure SQL Database SKU (Basic, S0, S1, S2)"
+  type        = string
+  default     = "S1"
+}
+
+variable "mssql_max_size_gb" {
+  description = "Azure SQL max database size in GB"
+  type        = number
+  default     = 10
+}

@@ -1,76 +1,129 @@
-# Phase 0 — Bootstrap
+# Bootstrap — One-time Cloud Setup
 
-Run **once** at the start of each KodeKloud session before any Terraform work.
+Run **once** per subscription/project before any Terraform work. Safe to re-run — all steps are idempotent.
 
-## What this phase sets up
+## What this sets up
 
-| Component | Azure | GCP |
-|-----------|-------|-----|
-| Terraform state backend | Storage Account + blob container | GCS bucket with versioning |
-| Identity for CI/CD | App Registration + Service Principal (OIDC) | Workload Identity Pool + Provider + Service Account |
-| Long-lived secrets needed | None | None |
-
----
+| Component | Where | Purpose |
+|-----------|-------|---------|
+| Terraform state storage account | `my-Rental-App` (permanent RG) | Stores tfstate across all envs |
+| `tfstate` blob container | inside storage account | One container, one key per env |
+| `my-Rental-App-Dev` resource group | Azure | Env resources (AKS, SQL, VNet) |
+| `my-Rental-App-QA` resource group | Azure | QA env resources |
+| Managed Identity role assignments | 6 roles on 3 RGs | Allows Terraform to create/destroy resources |
+| Federated credentials (OIDC) | 5 credentials | Trust GitHub Actions — no client secrets |
 
 ## Prerequisites
 
-- Azure CLI (`az`) logged in: `az login`
-- gcloud CLI logged in: `gcloud auth login && gcloud auth application-default login`
-- Know your existing Azure Resource Group name (KodeKloud pre-creates it)
-- Know your GitHub org/username and repo name
-
----
+- Azure CLI logged in: `az login`
+- Managed Identity already created in `my-Rental-App` via Azure Portal or:
+  ```bash
+  az identity create --name automation-identity --resource-group my-Rental-App --location eastus
+  ```
+- `bootstrap/.env` filled in (copy from `bootstrap/.env.example`)
 
 ## Steps
 
-### 1. Azure
+### 1. Fill in bootstrap/.env
 
 ```bash
-# Edit INPUTS section at the top of the script first
-vim bootstrap/azure/bootstrap.sh
+cp bootstrap/.env.example bootstrap/.env
+# Edit bootstrap/.env — fill in AZURE_SUBSCRIPTION_ID, AZURE_TENANT_ID,
+# AZURE_CLIENT_ID (managed identity), GITHUB_PAT, etc.
+```
 
+### 2. Run the Azure bootstrap script
+
+```bash
 bash bootstrap/azure/bootstrap.sh
 ```
 
-Copy the printed outputs into:
-- [terraform/azure/backend.tf](../terraform/azure/backend.tf) — replace `<placeholders>`
-- GitHub repo secrets (see [github-secrets.md](github-secrets.md))
+The script will:
+- Create Terraform state storage account + container in `my-Rental-App`
+- Create `my-Rental-App-Dev` and `my-Rental-App-QA` resource groups
+- Assign 6 roles to the managed identity (Contributor, Storage Blob, Key Vault, AcrPush)
+- Create 5 OIDC federated credentials for both repos
+- Print the complete GitHub Secrets table for both repos
 
-### 2. GCP
+### 3. Push secrets to GitHub
 
 ```bash
-# Ensure correct project is set
-gcloud config set project <your-default-project-id>
-
-# Edit INPUTS section at the top of the script first
-vim bootstrap/gcp/bootstrap.sh
-
-bash bootstrap/gcp/bootstrap.sh
+pip install requests pynacl
+python bootstrap/set-github-secrets.py --dry-run   # preview first
+python bootstrap/set-github-secrets.py              # push to both repos
 ```
 
-Copy the printed outputs into:
-- [terraform/gcp/backend.tf](../terraform/gcp/backend.tf) — replace `<placeholders>`
-- GitHub repo secrets (see [github-secrets.md](github-secrets.md))
+### 4. Provision shared layer (ACR + Key Vault — once only)
+
+```
+GitHub → Actions → Infra (terraform.yml)
+  cloud: azure | action: apply
+  → Approve at "shared" environment gate
+  → Job Summary shows ACR_NAME and KEY_VAULT_NAME
+```
+
+Add those values to `bootstrap/.env`, then re-run:
+```bash
+python bootstrap/set-github-secrets.py --repo build   # push ACR secrets to RentalApp-Build
+```
 
 ---
 
-## KodeKloud Constraints
+## Auth model
 
-- Azure: Cannot create Resource Groups — script uses existing RG only.
-- GCP: Only default project — script uses `gcloud config get-value project`.
-- Session limit: 1 hour/day — re-run bootstrap if the session expires and resources were lost.
+```
+No client secrets. No rotating passwords.
+
+GitHub Actions  →  OIDC token  →  Azure AD
+                                      │
+                              Federated credential
+                              on Managed Identity
+                                      │
+                              ARM API calls
+                              (Terraform, az CLI)
+```
+
+Federated credentials created by bootstrap.sh:
+
+| Name | Subject | Used by |
+|------|---------|---------|
+| `github-platform-dev` | `environment:dev` | terraform.yml dev runs |
+| `github-platform-destructive` | `environment:terraform-destructive-approval` | destroy/apply gate |
+| `github-platform-shared` | `environment:shared` | shared Terraform apply |
+| `github-build-main` | `ref:refs/heads/main` | RentalApp-Build CI |
+| `github-build-dispatch` | `workflow_dispatch` | manual CI triggers |
 
 ---
 
-## Cost Warnings
+## Resource group layout
 
-- Azure Storage Account (Standard_LRS): ~$0.02/GB/month — negligible for tfstate.
-- GCS bucket: free tier covers small state files.
-- Service Principals and Workload Identity: free.
-- No VMs or clusters are created in this phase.
+```
+my-Rental-App          ← permanent, never destroyed by Terraform
+  ├── automation-identity   (Managed Identity)
+  ├── rentalledgertfXXXX    (State storage account)
+  ├── rental-shared-kv-XXX  (Key Vault — from shared Terraform)
+  └── rentalXXXacr          (ACR — from shared Terraform)
+
+my-Rental-App-Dev      ← Terraform-owned, safe to destroy/recreate
+  ├── AKS cluster
+  ├── VNet + subnets
+  ├── PostgreSQL Flexible Server (or Azure SQL — selectable)
+  └── Storage account (uploads/backups)
+
+my-Rental-App-QA       ← same pattern as Dev
+```
 
 ---
 
-## Next Step
+## Cost
 
-Proceed to **Phase 1**: [terraform/azure/](../terraform/azure/) — Modular Azure infrastructure.
+- Storage Account (Standard_LRS): ~$0.02/GB/month — negligible for tfstate
+- Managed Identity: free
+- Federated credentials: free
+- No VMs or clusters created in this phase
+
+## Next step
+
+Proceed to **Phase 1**: `infrastructure/azure/environments/dev/` — deploy AKS, database, networking.
+
+See [STEPS.md](../STEPS.md) for the full step-by-step playbook.

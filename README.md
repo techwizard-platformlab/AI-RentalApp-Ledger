@@ -24,8 +24,9 @@ AI-RentalApp-Ledger/
 │       └── testing/            # BDD tests (Behave), post-deploy validation
 ├── infrastructure/
 │   ├── azure/
+│   │   ├── shared/              # Shared layer — ACR + Key Vault (permanent, run once)
 │   │   ├── environments/dev|qa/ # Terraform root configs per environment
-│   │   └── modules/            # aks, acr, keyvault, vnet, sql_database, budget, …
+│   │   └── modules/            # aks, postgresql, sql_database, vnet, keyvault, budget, …
 │   └── gcp/
 │       ├── environments/dev|qa/
 │       └── modules/            # gke, artifact_registry, cloud_sql, vpc, …
@@ -56,32 +57,27 @@ AI-RentalApp-Ledger/
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `terraform.yml` | Manual | Terraform plan / apply on Azure or GCP |
-| `infra-destroy.yml` | Manual (approval required) | Destroy compute-only or full infra |
-| `terraform-schedule.yml` | Manual / cron | Scheduled destroy + recreate for dev sessions |
-| `argocd-bootstrap.yml` | Manual | Install ArgoCD, deploy DB, apply AppProject + Application |
+| `terraform.yml` | Manual / cron | Plan / apply / destroy + scheduled dev lifecycle |
+| `argocd-bootstrap.yml` | Manual | Install ArgoCD, apply AppProject + Application CRDs |
 | `k8s-validate.yml` | Manual / path trigger | kubeconform + kustomize build validation |
-| `ci-build.yml` | Manual / path trigger | Terraform fmt, OPA lint, K8s manifest validation, Trivy scan |
+| `ci-build.yml` | Manual / path trigger | OPA Rego lint + Trivy security scan |
 | `cost-check.yml` | Manual / path trigger | Infracost estimate + OPA cost guardrail |
 
 ### Inputs: `terraform.yml`
 
 | Input | Options | Default |
 |---|---|---|
-| `target_env` | dev / qa | dev |
+| `target_env` | dev / qa / uat / prod | dev |
 | `cloud` | azure / gcp / both | azure |
 | `action` | plan / apply / destroy | plan |
-
-### Inputs: `infra-destroy.yml`
-
-| Input | Options | Default |
-|---|---|---|
-| `environment` | dev / qa | dev |
-| `cloud` | azure / gcp / both | azure |
 | `scope` | compute-only / full | compute-only |
-| `confirm` | (must match env name) | — |
+| `confirm` | type env name for non-dev apply/destroy | — |
 
-`compute-only` destroys AKS/GKE + VNet/VPC but keeps ACR, SQL, Key Vault, and Storage Account (avoids re-seeding data on every session).
+`compute-only` destroys AKS/GKE + VNet/VPC but keeps ACR, Key Vault, and Storage Account — preserving data between sessions.
+
+**Scheduled runs** (cron — no manual input needed):
+- Saturday 07:30 IST → `apply` dev compute (start session)
+- Sunday 23:30 IST → `destroy` dev compute (stop billing)
 
 ### Inputs: `argocd-bootstrap.yml`
 

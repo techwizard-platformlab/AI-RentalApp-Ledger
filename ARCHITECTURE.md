@@ -449,24 +449,42 @@ ReportExport (owner app)
 
 All infrastructure is managed via Terraform. Azure is the primary cloud; GCP is optional.
 
+### Resource Group Architecture
+
+```
+my-Rental-App          (permanent — never destroyed by Terraform)
+  ├── automation-identity    Managed Identity (OIDC auth for GitHub Actions)
+  ├── rentalledgertfXXXX     Terraform state storage account
+  ├── rental-shared-kv-XXX   Key Vault  ← provisioned by infrastructure/azure/shared/
+  └── rentalXXXacr           ACR        ← provisioned by infrastructure/azure/shared/
+
+my-Rental-App-Dev      (Terraform-owned — safe to destroy and recreate)
+  ├── AKS cluster (Standard_D2s_v3, 1 node)
+  ├── VNet 10.0.0.0/16 + subnets
+  ├── PostgreSQL Flexible Server  ← default
+  │     OR Azure SQL Database     ← optional (set db_engine = "mssql" in tfvars)
+  └── Storage account (uploads / backups)
+
+my-Rental-App-QA       (same pattern as Dev, higher resource tiers)
+```
+
 ### Azure Resources
 
-| Resource | Module | Purpose |
-|---|---|---|
-| AKS Cluster | `modules/aks` | Kubernetes cluster (Standard_D2s_v3 nodes, appnode pool) |
-| ACR | `modules/acr` | Container registry for Docker images |
-| Virtual Network | `modules/vnet` | Private networking |
-| Subnet | `modules/subnet` | AKS node subnet |
-| Key Vault | `modules/keyvault` | Secrets management (access-policy mode, no role assignments) |
-| **Azure SQL Database** | `modules/sql_database` | **Primary database — Basic (dev) / S1 (qa)** |
-| Storage Account | `modules/storage_account` | Uploads, backups, Terraform state |
-| Load Balancer | `modules/load_balancer` | Public IP for external traffic |
-| Security Group | `modules/security_group` | Network access control |
-| Budget | `modules/budget` | Weekly spend alerts (70 / 90 / 100 / 110% thresholds) |
-
-> **PostgreSQL note:** `modules/postgresql` exists but is commented out in all environments.
-> Azure SP may block `Microsoft.DBforPostgreSQL/register/action` depending on subscription permissions.
-> Uncomment when running on a full Azure subscription with appropriate role assignments.
+| Resource | Module | Location | Purpose |
+|---|---|---|---|
+| Managed Identity | (bootstrap) | `my-Rental-App` | OIDC auth — no client secrets |
+| State Storage Account | (bootstrap) | `my-Rental-App` | Terraform tfstate |
+| ACR | `shared/` | `my-Rental-App` | Container registry — permanent |
+| Key Vault | `shared/` | `my-Rental-App` | Secrets storage — permanent |
+| AKS Cluster | `modules/aks` | env RG | Kubernetes cluster |
+| Virtual Network | `modules/vnet` | env RG | Private networking |
+| Subnet | `modules/subnet` | env RG | AKS + ingress + data subnets |
+| **PostgreSQL Flexible Server** | `modules/postgresql` | env RG | **Default database** |
+| Azure SQL Database | `modules/sql_database` | env RG | Alternative database (opt-in) |
+| Storage Account | `modules/storage_account` | env RG | Uploads, backups |
+| Load Balancer | `modules/load_balancer` | env RG | Public IP for external traffic |
+| Security Group | `modules/security_group` | env RG | Network access control |
+| Budget | `modules/budget` | env RG | Weekly spend alerts |
 
 ### Network Design
 
@@ -478,38 +496,67 @@ K8s Service CIDR: 10.1.0.0/16  (pods, separate from VNet)
 K8s DNS:          10.1.0.10
 ```
 
-### Terraform Environments
+### Terraform Layout
 
 ```
-infrastructure/azure/environments/
-├── dev/   ← 1-node AKS (system pool) + 1-node appnode pool, Basic ACR, Basic SQL, Standard KV
-└── qa/    ← 1-node AKS + appnode pool, Basic ACR, S1 SQL, Standard KV
+infrastructure/azure/
+├── shared/              ← ACR + Key Vault — run ONCE, never destroyed
+│   ├── main.tf          (azurerm_container_registry + azurerm_key_vault)
+│   ├── variables.tf
+│   ├── outputs.tf       (acr_name, acr_login_server, key_vault_name, key_vault_uri)
+│   └── backend.tf       (key = "shared.terraform.tfstate")
+│
+└── environments/
+    ├── dev/             ← 1-node AKS, PostgreSQL B1ms (default), VNet 10.0.0.0/16
+    └── qa/              ← 1-node AKS, PostgreSQL B1ms (default), VNet 10.1.0.0/16
 
 infrastructure/gcp/environments/
-├── dev/   ← GKE Autopilot, db-f1-micro Cloud SQL, basic Artifact Registry
-└── qa/    ← GKE Autopilot, db-g1-small Cloud SQL
+├── dev/                 ← GKE Autopilot, db-f1-micro Cloud SQL, Artifact Registry
+└── qa/                  ← GKE Autopilot, db-g1-small Cloud SQL
 ```
 
 ### Database per Environment
 
-| Environment | Engine | Module | SKU | Size | Secrets |
-|------------|--------|--------|-----|------|---------|
-| Azure dev | Azure SQL Database | `modules/sql_database` | Basic | 2 GB | Key Vault |
-| Azure qa | Azure SQL Database | `modules/sql_database` | S1 | 10 GB | Key Vault |
-| GCP dev | Cloud SQL PostgreSQL 16 | `modules/cloud_sql` | db-f1-micro | 10 GB | Secret Manager |
-| GCP qa | Cloud SQL PostgreSQL 16 | `modules/cloud_sql` | db-g1-small | 10 GB | Secret Manager |
+Database engine is **selectable per environment** via `db_engine` in `terraform.tfvars`.
+Only one module deploys — the other has `count = 0`.
 
-> **Why Azure SQL instead of PostgreSQL?**
-> Some Azure subscriptions block `Microsoft.DBforPostgreSQL/register/action`.
-> The `modules/postgresql` module is kept commented out; enable when the subscription
-> allows provider registration and Flexible Server creation.
+| Environment | Default engine | Module | SKU | Cost/month | Secrets |
+|------------|---------------|--------|-----|-----------|---------|
+| Azure dev | **PostgreSQL Flexible Server** | `modules/postgresql` | B_Standard_B1ms | ~$12 | Key Vault |
+| Azure dev (alt) | Azure SQL Database | `modules/sql_database` | Basic | ~$5 | Key Vault |
+| Azure qa | **PostgreSQL Flexible Server** | `modules/postgresql` | B_Standard_B1ms | ~$12 | Key Vault |
+| Azure qa (alt) | Azure SQL Database | `modules/sql_database` | S1 | ~$15 | Key Vault |
+| GCP dev | Cloud SQL PostgreSQL 16 | `modules/cloud_sql` | db-f1-micro | ~$8 | Secret Manager |
+| GCP qa | Cloud SQL PostgreSQL 16 | `modules/cloud_sql` | db-g1-small | ~$25 | Secret Manager |
 
-### Azure SP Constraints
+To switch engines — edit `terraform.tfvars` for the target env and re-apply:
+```hcl
+db_engine = "postgresql"   # default — PostgreSQL Flexible Server
+db_engine = "mssql"        # opt-in — Azure SQL Database
+```
 
-- No `Microsoft.Authorization/roleAssignments` — Key Vault uses access policies instead of RBAC
-- `resource_provider_registrations = "none"` required if the SP cannot register providers
-- No WAF policies, no container insights (not needed for dev cost targets)
-- Service Principal client secret must be regenerated if expired
+All db secrets (`db-host`, `db-name`, `db-user`, `db-password`, `db-port`, `db-engine`) are written to the shared Key Vault by whichever module is active.
+
+### Auth — Managed Identity + OIDC
+
+```
+GitHub Actions workflow
+    │  OIDC token (short-lived, no secrets)
+    ▼
+Azure AD — validates federated credential
+    │  issues access token scoped to Managed Identity
+    ▼
+Terraform / az CLI — ARM API calls
+    │
+    ├── my-Rental-App     (Contributor — create ACR, Key Vault, storage)
+    ├── my-Rental-App-Dev (Contributor — create AKS, VNet, DB)
+    ├── my-Rental-App-QA  (Contributor — create AKS, VNet, DB)
+    ├── State storage     (Storage Blob Data Contributor)
+    ├── Key Vault secrets (Key Vault Secrets Officer)
+    └── ACR               (AcrPush)
+```
+
+No client secrets. No service principals. No secret rotation.
 
 ---
 
@@ -726,26 +773,24 @@ ci.yml (workflow_dispatch)
 | `buildcache` | exact | always (build layer cache) |
 | Untagged (cosign sigs, etc.) | — | purged after 1 day |
 
-### AI-RentalApp-Ledger Workflows
+### Platform Workflows (AI-RentalApp-Ledger)
 
-| Workflow | Trigger | Purpose |
+| Workflow | Trigger | Jobs |
 |---|---|---|
-| `ci-build.yml` | manual / path trigger | Terraform fmt, OPA lint, K8s manifest validation, Trivy FS scan |
-| `terraform.yml` | manual | Plan / apply on Azure or GCP |
-| `infra-destroy.yml` | manual (approval gate) | Destroy compute-only or full infra |
-| `argocd-bootstrap.yml` | manual | Install ArgoCD, deploy DB, create K8s secrets, apply AppProject + Application |
-| `cost-check.yml` | manual / path trigger | Infracost estimate + OPA cost guardrail |
-| `k8s-validate.yml` | manual / path trigger | kubeconform + kustomize build validation |
-| `terraform-schedule.yml` | manual / cron | Scheduled destroy/recreate for dev sessions |
+| `terraform.yml` | Manual + cron | setup → azure_shared_plan → azure_shared_apply → azure_plan → azure_approve → azure_apply |
+| `argocd-bootstrap.yml` | Manual | install / apply-apps / upgrade |
+| `k8s-validate.yml` | Manual + path | kubeconform + kustomize build |
+| `ci-build.yml` | Manual + path | opa-lint + trivy scan |
+| `cost-check.yml` | Manual + path | infracost + opa cost guard |
 
-#### `terraform.yml` inputs
+**terraform.yml** is the unified infrastructure workflow — it replaces the former `infra-destroy.yml` and `terraform-schedule.yml`.
 
-| Input | Options | Default | Description |
-|-------|---------|---------|-------------|
-| `target_env` | dev / qa / uat / prod | dev | Target environment |
-| `cloud` | azure / gcp / both | azure | Target cloud provider |
-| `action` | plan / apply / destroy | plan | Terraform action |
-| `confirm` | string | — | Type env name to confirm apply/destroy on non-dev |
+Key features:
+- **Shared layer jobs** (`azure_shared_plan` / `azure_shared_apply`) — manage ACR + Key Vault in `my-Rental-App`; gated by `shared` environment; skipped on scheduled runs
+- **Env layer jobs** (`azure_plan` / `azure_approve` / `azure_apply`) — manage AKS, DB, VNet in env-specific RG
+- **Approval gate** (`terraform-destructive-approval` environment) — fires on manual destroy or apply with deletions; skipped for cron
+- **Scheduled cron** — Saturday 02:00 UTC apply (recreate dev), Sunday 18:00 UTC destroy (stop billing)
+- **Compute-only destroy** — removes AKS + VNet; keeps ACR, Key Vault, Storage Account, Database
 
 #### `argocd-bootstrap.yml` inputs
 
