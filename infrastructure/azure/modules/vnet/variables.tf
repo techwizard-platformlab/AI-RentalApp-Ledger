@@ -19,6 +19,12 @@ variable "address_space" {
   default = ["10.0.0.0/16"]
 }
 
+variable "subnets" {
+  description = "Map of subnet key to CIDR block — created inline to avoid API propagation race"
+  type        = map(string)
+  default     = {}
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

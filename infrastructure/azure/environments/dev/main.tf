@@ -88,16 +88,8 @@ module "vnet" {
   location_short      = local.location_short
   resource_group_name = azurerm_resource_group.env.name
   address_space       = [local.cfg.vnet_cidr]
-  tags                = local.tags
-}
-
-module "subnet" {
-  source              = "../../modules/subnet"
-  environment         = local.env
-  location_short      = local.location_short
-  resource_group_name = azurerm_resource_group.env.name
-  vnet_name           = module.vnet.name
   subnets             = local.cfg.subnet_cidrs
+  tags                = local.tags
 }
 
 module "security_group" {
@@ -106,7 +98,7 @@ module "security_group" {
   location            = var.location
   location_short      = local.location_short
   resource_group_name = azurerm_resource_group.env.name
-  subnet_ids          = module.subnet.ids
+  subnet_ids          = module.vnet.subnet_ids
   tags                = local.tags
 }
 
@@ -121,7 +113,7 @@ module "aks" {
   node_count          = local.cfg.aks_nodes
   vm_size             = local.cfg.aks_vm_size
   os_disk_size_gb     = 30
-  subnet_id           = module.subnet.ids["aks"]
+  subnet_id           = module.vnet.subnet_ids["aks"]
   tags                = local.tags
 }
 
