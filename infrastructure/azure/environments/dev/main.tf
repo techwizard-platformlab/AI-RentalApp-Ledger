@@ -183,3 +183,36 @@ module "budget" {
   budget_start_date  = "2026-04-01T00:00:00Z"
   alert_emails       = var.alert_emails
 }
+
+# ── State fixes ─────────────────────────────────────────────────────────────
+# Subnets moved from module.subnet to module.vnet
+moved {
+  from = module.subnet.azurerm_subnet.this["aks"]
+  to   = module.vnet.azurerm_subnet.this["aks"]
+}
+
+moved {
+  from = module.subnet.azurerm_subnet.this["ingress"]
+  to   = module.vnet.azurerm_subnet.this["ingress"]
+}
+
+moved {
+  from = module.subnet.azurerm_subnet.this["data"]
+  to   = module.vnet.azurerm_subnet.this["data"]
+}
+
+# Import orphaned NSG rules
+import {
+  to = module.security_group.azurerm_network_security_rule.allow_https_inbound
+  id = "/subscriptions/03229d8b-4593-4f64-9eb3-b60ea30a534b/resourceGroups/my-Rental-App-Dev/providers/Microsoft.Network/networkSecurityGroups/dev-eus2-nsg/securityRules/allow-https-inbound"
+}
+
+import {
+  to = module.security_group.azurerm_network_security_rule.allow_http_inbound
+  id = "/subscriptions/03229d8b-4593-4f64-9eb3-b60ea30a534b/resourceGroups/my-Rental-App-Dev/providers/Microsoft.Network/networkSecurityGroups/dev-eus2-nsg/securityRules/allow-http-inbound"
+}
+
+import {
+  to = module.security_group.azurerm_network_security_rule.deny_all_inbound
+  id = "/subscriptions/03229d8b-4593-4f64-9eb3-b60ea30a534b/resourceGroups/my-Rental-App-Dev/providers/Microsoft.Network/networkSecurityGroups/dev-eus2-nsg/securityRules/deny-all-inbound"
+}
