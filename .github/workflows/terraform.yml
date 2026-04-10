@@ -170,8 +170,8 @@ jobs:
           SCOPE="${{ github.event.inputs.scope }}"
           CONFIRM="${{ github.event.inputs.confirm }}"
 
-          # Safety: non-dev apply/destroy requires confirm field = env name
-          if [ "$ACTION" != "plan" ] && [ "$ENV" != "dev" ]; then
+          # Safety: apply/destroy requires confirm field = env name
+          if [ "$ACTION" != "plan" ]; then
             if [ "$CONFIRM" != "$ENV" ]; then
               echo "ERROR: For $ACTION on $ENV you must type the environment name in the confirm field."
               exit 1
@@ -472,6 +472,14 @@ jobs:
         id: opa_cost
         run: |
           set +e
+          
+          # Print native text format directly to the Actions terminal log
+          echo "==== OPA Cost Check Terminal Output ===="
+          conftest test tfplan.json \
+            --namespace cost_tfplan \
+            --policy ../../../../platform/security/policies/cost/tf_plan_cost.rego
+          
+          # Generate JSON for the GitHub Step Summary UI panel
           conftest test tfplan.json \
             --namespace cost_tfplan \
             --policy ../../../../platform/security/policies/cost/tf_plan_cost.rego \
@@ -742,7 +750,7 @@ jobs:
   # GCP — Plan
   # ===========================================================================
   gcp_plan:
-    name: "GCP Plan / ${{ needs.setup.outputs.env }}"
+    name: "GCP Plan"
     runs-on: ubuntu-latest
     needs: setup
     if: |
@@ -847,7 +855,7 @@ jobs:
   # Same conditions as azure_approve — shared environment.
   # ===========================================================================
   gcp_approve:
-    name: "⚠️ Approve — GCP ${{ needs.setup.outputs.env }} ${{ needs.setup.outputs.action }} (${{ needs.setup.outputs.scope }})"
+    name: "⚠️ Approve — GCP (Destructive)"
     runs-on: ubuntu-latest
     needs: [setup, gcp_plan]
     if: |
@@ -895,7 +903,7 @@ jobs:
   # GCP — Apply / Destroy
   # ===========================================================================
   gcp_apply:
-    name: "GCP ${{ needs.setup.outputs.action == 'destroy' && 'Destroy' || 'Apply' }} / ${{ needs.setup.outputs.env }}"
+    name: "GCP Apply / Destroy"
     runs-on: ubuntu-latest
     needs: [setup, gcp_plan, gcp_approve]
     if: |

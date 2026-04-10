@@ -28,15 +28,16 @@ on:
       db_mode:
         description: "Database backend to use"
         required: false
-        default: "azure-sql"
+        default: "azure-pg"
         type: choice
         options:
-          - azure-sql   # Azure SQL Database Basic/S-tier — pulls creds from Key Vault
+          - azure-pg    # Azure PostgreSQL Flexible Server — pulls creds from Key Vault
           - helm-pg     # In-cluster PostgreSQL via Bitnami Helm chart (no Azure DB needed)
-          - azure-pg    # Azure PostgreSQL Flexible Server (full Azure subscription only)
+          - azure-sql   # Azure SQL Database Basic/S-tier — pulls creds from Key Vault
 
 permissions:
   contents: write   # required to push the ACR patch commit back to the repo
+  id-token: write   # required for OIDC Azure login
 
 concurrency:
   group: argocd-${{ github.event.inputs.environment }}
@@ -44,7 +45,7 @@ concurrency:
 
 env:
   ARGOCD_VERSION: "7.3.11"        # argo-cd Helm chart version (ArgoCD v2.11)
-  AKS_NAME: "${{ github.event.inputs.environment }}-eus-aks"
+  AKS_NAME: "${{ github.event.inputs.environment }}-eus2-aks"
   NAMESPACE_ARGOCD: argocd
   NAMESPACE_APP: "rental-${{ github.event.inputs.environment }}"
 
@@ -56,21 +57,21 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
-      # ── Azure login (client secret) ─────────────────────────────────────────
+      # ── Azure login (OIDC / Managed Identity — no client secret) ──────────────
       - name: Azure login
-        run: |
-          az login \
-            --service-principal \
-            --username "${{ secrets.AZURE_CLIENT_ID }}" \
-            --password "${{ secrets.AZURE_CLIENT_SECRET }}" \
-            --tenant  "${{ secrets.AZURE_TENANT_ID }}"
-          az account set --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+        uses: azure/login@a65d910e8af852a8061c627c456678983e180302  # v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       # ── Get AKS credentials ─────────────────────────────────────────────────
       - name: Get AKS credentials
         run: |
+          ENV="${{ github.event.inputs.environment }}"
+          ENV_RG="my-Rental-App-${ENV^}"   # e.g. my-Rental-App-Dev
           az aks get-credentials \
-            --resource-group "${{ secrets.TF_BACKEND_RG }}" \
+            --resource-group "$ENV_RG" \
             --name "${{ env.AKS_NAME }}" \
             --overwrite-existing
           kubectl get nodes
@@ -205,7 +206,7 @@ jobs:
         run: |
           NS="${{ env.NAMESPACE_APP }}"
           MODE="${{ github.event.inputs.db_mode }}"
-          MODE="${MODE:-azure-sql}"
+          MODE="${MODE:-azure-pg}"
 
           if [ "$MODE" = "helm-pg" ]; then
             DB_ENGINE="django.db.backends.postgresql"
@@ -216,23 +217,24 @@ jobs:
             DB_PORT="${{ steps.pg_helm.outputs.db_port }}"
             SECRET_KEY="${{ steps.pg_helm.outputs.django_secret_key }}"
             DB_SSLMODE="disable"
-          elif [ "$MODE" = "azure-pg" ]; then
-            DB_ENGINE="django.db.backends.postgresql"
-            DB_HOST="${{ steps.pg_kv.outputs.db_host }}"
-            DB_NAME="${{ steps.pg_kv.outputs.db_name }}"
-            DB_USER="${{ steps.pg_kv.outputs.db_user }}"
-            DB_PASS="${{ steps.pg_kv.outputs.db_password }}"
-            DB_PORT="${{ steps.pg_kv.outputs.db_port }}"
-            SECRET_KEY="${{ steps.pg_kv.outputs.django_secret_key }}"
-            DB_SSLMODE="require"
-          else
-            # azure-sql (default) — Azure SQL Database (SQL Server/MSSQL)
+          elif [ "$MODE" = "azure-sql" ]; then
+            # Azure SQL Database (SQL Server/MSSQL)
             DB_ENGINE="mssql"
             DB_HOST="${{ steps.pg_kv.outputs.db_host }}"
             DB_NAME="${{ steps.pg_kv.outputs.db_name }}"
             DB_USER="${{ steps.pg_kv.outputs.db_user }}"
             DB_PASS="${{ steps.pg_kv.outputs.db_password }}"
             DB_PORT="1433"
+            SECRET_KEY="${{ steps.pg_kv.outputs.django_secret_key }}"
+            DB_SSLMODE="require"
+          else
+            # azure-pg (default) — Azure PostgreSQL Flexible Server
+            DB_ENGINE="django.db.backends.postgresql"
+            DB_HOST="${{ steps.pg_kv.outputs.db_host }}"
+            DB_NAME="${{ steps.pg_kv.outputs.db_name }}"
+            DB_USER="${{ steps.pg_kv.outputs.db_user }}"
+            DB_PASS="${{ steps.pg_kv.outputs.db_password }}"
+            DB_PORT="${{ steps.pg_kv.outputs.db_port }}"
             SECRET_KEY="${{ steps.pg_kv.outputs.django_secret_key }}"
             DB_SSLMODE="require"
           fi

@@ -59,7 +59,7 @@ jobs:
         run: |
           ENV="${{ inputs.environment || 'dev' }}"
           RG="my-Rental-App-${ENV^^}"        # e.g. my-Rental-App-Dev, my-Rental-App-QA
-          AKS_NAME="rental-aks-${ENV}-eus"   # matches naming convention in AKS module
+          AKS_NAME="${ENV}-eus2-aks"   # matches naming convention in AKS module: {env}-{location_short}-aks
           az aks get-credentials \
             --resource-group "${RG}" \
             --name "${AKS_NAME}" \
