@@ -1,9 +1,9 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ledger-service
+  name: rag-api
   labels:
-    app: ledger-service
+    app: rag-api
     project: rentalAppLedger
   annotations:
     argocd.argoproj.io/sync-wave: "2"
@@ -11,18 +11,18 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      app: ledger-service
+      app: rag-api
   template:
     metadata:
       labels:
-        app: ledger-service
+        app: rag-api
         project: rentalAppLedger
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "8002"
+        prometheus.io/port: "8004"
         prometheus.io/path: "/metrics"
     spec:
-      serviceAccountName: ledger-service
+      serviceAccountName: rag-api
       securityContext:
         runAsNonRoot: true
         runAsUser: 1001
@@ -35,58 +35,53 @@ spec:
       imagePullSecrets:
         - name: acr-pull-secret
       containers:
-        - name: ledger-service
-          image: rental-app-ledger:latest
+        - name: rag-api
+          # Built from apps/ai-engine/rag/ — separate image from Django services
+          image: rental-rag-api:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
-              containerPort: 8002
+              containerPort: 8004
               protocol: TCP
           envFrom:
             - configMapRef:
-                name: ledger-service-config
+                name: rag-api-config
             - secretRef:
-                name: ledger-service-secret
-          env:
-            - name: POD_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
+                name: rag-api-secret
           resources:
             requests:
-              cpu: 100m
-              memory: 128Mi
-            limits:
-              cpu: 500m
+              cpu: 200m
               memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
+            readOnlyRootFilesystem: false  # ChromaDB writes to /chroma volume
             capabilities:
               drop: [ALL]
           readinessProbe:
             httpGet:
               path: /health
-              port: 8002
-            initialDelaySeconds: 15
-            periodSeconds: 10
+              port: 8004
+            initialDelaySeconds: 20
+            periodSeconds: 15
             failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /health
-              port: 8002
-            initialDelaySeconds: 30
-            periodSeconds: 15
+              port: 8004
+            initialDelaySeconds: 45
+            periodSeconds: 20
             failureThreshold: 3
-          startupProbe:
-            httpGet:
-              path: /health
-              port: 8002
-            failureThreshold: 10
-            periodSeconds: 5
           volumeMounts:
             - mountPath: /tmp
               name: tmp-dir
+            - mountPath: /chroma
+              name: chroma-data
       volumes:
         - name: tmp-dir
           emptyDir: {}
+        - name: chroma-data
+          emptyDir: {}
+          # For production: replace emptyDir with a PVC for vector persistence

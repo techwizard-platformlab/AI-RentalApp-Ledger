@@ -2,10 +2,17 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: notification-service-config
-  namespace: rental-dev
   labels:
     app: notification-service
     project: rentalAppLedger
 data:
   LOG_LEVEL: "INFO"
-  ENVIRONMENT: "dev"
+  SERVICE_PORT: "8003"
+  # Channel config — secrets (webhook URL, SMTP password) come from notification-service-secret
+  EMAIL_BACKEND: "django.core.mail.backends.smtp.EmailBackend"
+  EMAIL_PORT: "587"
+  EMAIL_USE_TLS: "true"
+  EMAIL_HOST: "smtp.gmail.com"
+  # Retry settings for failed notifications
+  NOTIFICATION_RETRY_COUNT: "3"
+  NOTIFICATION_RETRY_DELAY: "5"

@@ -1,10 +1,9 @@
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: api-gateway-hpa
-  namespace: rental-dev
+  name: rag-api-hpa
   labels:
-    app: api-gateway
+    app: rag-api
     project: rentalAppLedger
   annotations:
     argocd.argoproj.io/sync-wave: "3"
@@ -12,9 +11,9 @@ spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: api-gateway
-  minReplicas: 1   # dev; qa overlay patches to 2
-  maxReplicas: 3
+    name: rag-api
+  minReplicas: 1
+  maxReplicas: 2
   metrics:
     - type: Resource
       resource:
@@ -27,4 +26,7 @@ spec:
         name: memory
         target:
           type: Utilization
-          averageUtilization: 80
+          averageUtilization: 85
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 600

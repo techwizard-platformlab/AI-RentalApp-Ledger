@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rental-service-config
+data:
+  ENVIRONMENT: "qa"
+  LOG_LEVEL: "INFO"
+  DJANGO_SETTINGS_MODULE: "config.settings.qa"
+  DEBUG: "false"
+  GUNICORN_WORKERS: "4"
+  GUNICORN_TIMEOUT: "120"
+  DEFAULT_BILLING_CYCLE: "monthly"
+  OVERDUE_NOTIFICATION_DAYS: "5"

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rag-api-config
+data:
+  ENVIRONMENT: "dev"
+  LOG_LEVEL: "DEBUG"
+  LLM_PROVIDER: "groq"
+  RATE_LIMIT_PER_MINUTE: "30"
+  INDEX_BATCH_SIZE: "20"
+  # Dev: point at dev Django API for indexing
+  DJANGO_API_URL: "http://api-gateway.rental-dev.svc.cluster.local:80"

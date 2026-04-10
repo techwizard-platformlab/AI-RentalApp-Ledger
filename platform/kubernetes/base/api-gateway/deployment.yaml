@@ -2,17 +2,13 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: api-gateway
-  namespace: rental-dev
   labels:
     app: api-gateway
-    version: "1.0.0"
-    environment: dev
     project: rentalAppLedger
   annotations:
-    # ArgoCD sync wave - deploy after configmaps/secrets
     argocd.argoproj.io/sync-wave: "2"
 spec:
-  replicas: 1   # dev: 1; qa overlay patches to 2
+  replicas: 1
   selector:
     matchLabels:
       app: api-gateway
@@ -20,14 +16,13 @@ spec:
     metadata:
       labels:
         app: api-gateway
-        version: "1.0.0"
-        environment: dev
         project: rentalAppLedger
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8000"
         prometheus.io/path: "/metrics"
     spec:
+      serviceAccountName: api-gateway
       securityContext:
         runAsNonRoot: true
         runAsUser: 1001
@@ -41,13 +36,23 @@ spec:
         - name: acr-pull-secret
       containers:
         - name: api-gateway
-          # Image pushed by RentalApp CI → ACR. Tag updated by ArgoCD Image Updater.
-          # Registry prefix is injected by kustomize images overlay (platform/kubernetes/overlays/dev/kustomization.yaml)
-          image: "rental-app-ledger:latest"
+          image: rental-app-ledger:latest
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 8000
+            - name: http
+              containerPort: 8000
               protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: api-gateway-config
+            - secretRef:
+                name: api-gateway-secret
+          env:
+            # Expose pod namespace for service URL construction
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           resources:
             requests:
               cpu: 100m
@@ -55,11 +60,6 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
-          envFrom:
-            - configMapRef:
-                name: api-gateway-config
-            - secretRef:
-                name: api-gateway-secret
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -69,20 +69,30 @@ spec:
             httpGet:
               path: /health
               port: 8000
-            initialDelaySeconds: 10
-            periodSeconds: 5
+            initialDelaySeconds: 15
+            periodSeconds: 10
             failureThreshold: 3
+            successThreshold: 1
           livenessProbe:
             httpGet:
               path: /health
               port: 8000
             initialDelaySeconds: 30
-            periodSeconds: 10
+            periodSeconds: 15
             failureThreshold: 3
-          # tmp dir for uvicorn/gunicorn temp files (readOnlyRootFilesystem requires volumeMount)
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            failureThreshold: 10
+            periodSeconds: 5
           volumeMounts:
             - mountPath: /tmp
               name: tmp-dir
+            - mountPath: /app/staticfiles
+              name: static-dir
       volumes:
         - name: tmp-dir
+          emptyDir: {}
+        - name: static-dir
           emptyDir: {}

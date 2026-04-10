@@ -7,12 +7,14 @@ metadata:
     project: rentalAppLedger
     environment: qa
   annotations:
-    # QA uses same Image Updater config but manual sync
-    argocd-image-updater.argoproj.io/image-list: |
-      api-gateway={ACR_NAME}.azurecr.io/api-gateway,
-      rental-service={ACR_NAME}.azurecr.io/rental-service,
-      ledger-service={ACR_NAME}.azurecr.io/ledger-service,
-      notification-service={ACR_NAME}.azurecr.io/notification-service
+    # ArgoCD Image Updater: same ACR images as dev, QA branch write-back.
+    # ACR_LOGIN_SERVER is patched by argocd-bootstrap workflow.
+    argocd-image-updater.argoproj.io/image-list: >-
+      rental-app-ledger=ACR_LOGIN_SERVER/rental-app-ledger,
+      rental-rag-api=ACR_LOGIN_SERVER/rental-rag-api
+    argocd-image-updater.argoproj.io/rental-app-ledger.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/rental-rag-api.update-strategy: newest-build
+    # Write back to qa branch overlay kustomization.yaml
     argocd-image-updater.argoproj.io/write-back-method: git
     argocd-image-updater.argoproj.io/git-branch: qa
     # Notifications
@@ -25,7 +27,7 @@ spec:
   project: rental-ledger
 
   source:
-    repoURL: "https://github.com/{org}/rentalAppLedger"
+    repoURL: "https://github.com/techwizard-platformlab/AI-RentalApp-Ledger"
     targetRevision: qa            # track the qa branch
     path: platform/kubernetes/overlays/qa
 

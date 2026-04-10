@@ -57,9 +57,12 @@ jobs:
       - name: Get AKS credentials
         if: matrix.cloud == 'azure'
         run: |
+          ENV="${{ inputs.environment || 'dev' }}"
+          RG="my-Rental-App-${ENV^^}"        # e.g. my-Rental-App-Dev, my-Rental-App-QA
+          AKS_NAME="rental-aks-${ENV}-eus"   # matches naming convention in AKS module
           az aks get-credentials \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --name rental-aks-dev \
+            --resource-group "${RG}" \
+            --name "${AKS_NAME}" \
             --overwrite-existing
 
       - name: GCP login (OIDC)
@@ -79,12 +82,14 @@ jobs:
       # ── Port-forward services for testing ─────────────────────────────────
       - name: Port-forward API Gateway
         run: |
-          kubectl port-forward -n rental-dev svc/api-gateway 8000:80 &
+          NS="rental-${{ inputs.environment || 'dev' }}"
+          kubectl port-forward -n "${NS}" svc/api-gateway 8000:80 &
           sleep 5
 
       - name: Port-forward RAG API
         run: |
-          kubectl port-forward -n rental-dev svc/rag-api 8080:8080 &
+          NS="rental-${{ inputs.environment || 'dev' }}"
+          kubectl port-forward -n "${NS}" svc/rag-api 8080:8080 &
           sleep 3
 
       # ── Run BDD tests ──────────────────────────────────────────────────────

@@ -1,0 +1,16 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: placeholder  # overridden by kustomization target
+spec:
+  template:
+    spec:
+      containers:
+        - name: placeholder  # overridden by kustomization target
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 750m
+              memory: 768Mi

@@ -1,0 +1,7 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: placeholder  # overridden by kustomization target
+spec:
+  minReplicas: 2
+  maxReplicas: 8

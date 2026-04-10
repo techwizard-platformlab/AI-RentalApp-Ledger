@@ -7,18 +7,16 @@ metadata:
     project: rentalAppLedger
     environment: dev
   annotations:
-    # ArgoCD Image Updater: watch ACR for new image tags
-    # ACR_LOGIN_SERVER is injected by argocd-bootstrap workflow (e.g. deveusacrabcd12.azurecr.io)
+    # ArgoCD Image Updater: watch ACR for new image tags on every CI push.
+    # ACR_LOGIN_SERVER is patched by argocd-bootstrap workflow (e.g. myacr.azurecr.io).
+    # rental-app-ledger  — Django monorepo image (api-gateway, rental, ledger, notification)
+    # rental-rag-api     — FastAPI RAG service image
     argocd-image-updater.argoproj.io/image-list: >-
-      api-gateway=ACR_LOGIN_SERVER/rental-app-ledger,
-      rental-service=ACR_LOGIN_SERVER/rental-app-ledger,
-      ledger-service=ACR_LOGIN_SERVER/rental-app-ledger,
-      notification-service=ACR_LOGIN_SERVER/rental-app-ledger
-    argocd-image-updater.argoproj.io/api-gateway.update-strategy: newest-build
-    argocd-image-updater.argoproj.io/rental-service.update-strategy: newest-build
-    argocd-image-updater.argoproj.io/ledger-service.update-strategy: newest-build
-    argocd-image-updater.argoproj.io/notification-service.update-strategy: newest-build
-    # Write back image tag as git commit (GitOps pattern)
+      rental-app-ledger=ACR_LOGIN_SERVER/rental-app-ledger,
+      rental-rag-api=ACR_LOGIN_SERVER/rental-rag-api
+    argocd-image-updater.argoproj.io/rental-app-ledger.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/rental-rag-api.update-strategy: newest-build
+    # Write back image tag as git commit so the overlay kustomization.yaml stays in sync
     argocd-image-updater.argoproj.io/write-back-method: git
     argocd-image-updater.argoproj.io/git-branch: main
   finalizers:

@@ -2,11 +2,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: notification-service
-  namespace: rental-dev
   labels:
     app: notification-service
-    version: "1.0.0"
-    environment: dev
     project: rentalAppLedger
   annotations:
     argocd.argoproj.io/sync-wave: "2"
@@ -19,14 +16,13 @@ spec:
     metadata:
       labels:
         app: notification-service
-        version: "1.0.0"
-        environment: dev
         project: rentalAppLedger
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8003"
         prometheus.io/path: "/metrics"
     spec:
+      serviceAccountName: notification-service
       securityContext:
         runAsNonRoot: true
         runAsUser: 1001
@@ -40,23 +36,24 @@ spec:
         - name: acr-pull-secret
       containers:
         - name: notification-service
-          image: "rental-app-ledger:latest"
+          image: rental-app-ledger:latest
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 8003
+            - name: http
+              containerPort: 8003
               protocol: TCP
-          resources:
-            requests:
-              cpu: 100m
-              memory: 128Mi
-            limits:
-              cpu: 500m
-              memory: 512Mi
           envFrom:
             - configMapRef:
                 name: notification-service-config
             - secretRef:
                 name: notification-service-secret
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -67,13 +64,15 @@ spec:
               path: /health
               port: 8003
             initialDelaySeconds: 10
-            periodSeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /health
               port: 8003
-            initialDelaySeconds: 30
-            periodSeconds: 10
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 3
           volumeMounts:
             - mountPath: /tmp
               name: tmp-dir

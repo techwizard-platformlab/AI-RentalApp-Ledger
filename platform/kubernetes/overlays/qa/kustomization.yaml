@@ -4,44 +4,105 @@ kind: Kustomization
 namespace: rental-qa
 
 resources:
+  - namespace.yaml
   - ../../base/api-gateway
   - ../../base/rental-service
   - ../../base/ledger-service
   - ../../base/notification-service
+  - ../../base/rag-api
+  - patches/pdb.yaml
 
 labels:
   - pairs:
       environment: qa
     includeSelectors: false
+    includeTemplates: true
 
 images:
   - name: rental-app-ledger
     newName: placeholder.azurecr.io/rental-app-ledger
     newTag: latest
+  - name: rental-rag-api
+    newName: placeholder.azurecr.io/rental-rag-api
+    newTag: latest
 
-# QA: patch replicas to 2 and HPA min to 2 for all services
 patches:
-  - patch: |-
-      - op: replace
-        path: /spec/replicas
-        value: 2
-    target:
-      kind: Deployment
-      labelSelector: "project=rentalAppLedger"
-
-  - patch: |-
-      - op: replace
-        path: /spec/minReplicas
-        value: 2
-    target:
-      kind: HorizontalPodAutoscaler
-      labelSelector: "project=rentalAppLedger"
-
-  # Point configmaps to qa namespace environment value
-  - patch: |-
-      - op: replace
-        path: /data/ENVIRONMENT
-        value: qa
+  # ── configmap patches ──────────────────────────────────────────────────────
+  - path: patches/api-gateway-config.yaml
     target:
       kind: ConfigMap
-      labelSelector: "project=rentalAppLedger"
+      name: api-gateway-config
+
+  - path: patches/rental-service-config.yaml
+    target:
+      kind: ConfigMap
+      name: rental-service-config
+
+  - path: patches/ledger-service-config.yaml
+    target:
+      kind: ConfigMap
+      name: ledger-service-config
+
+  - path: patches/notification-service-config.yaml
+    target:
+      kind: ConfigMap
+      name: notification-service-config
+
+  - path: patches/rag-api-config.yaml
+    target:
+      kind: ConfigMap
+      name: rag-api-config
+
+  # ── QA: 2 replicas for all Django services ─────────────────────────────────
+  - path: patches/replicas.yaml
+    target:
+      kind: Deployment
+      name: api-gateway
+
+  - path: patches/replicas.yaml
+    target:
+      kind: Deployment
+      name: rental-service
+
+  - path: patches/replicas.yaml
+    target:
+      kind: Deployment
+      name: ledger-service
+
+  # ── QA: higher resource limits ─────────────────────────────────────────────
+  - path: patches/resources-api-gateway.yaml
+    target:
+      kind: Deployment
+      name: api-gateway
+
+  - path: patches/resources-services.yaml
+    target:
+      kind: Deployment
+      name: rental-service
+
+  - path: patches/resources-services.yaml
+    target:
+      kind: Deployment
+      name: ledger-service
+
+  # ── QA: HPA min replicas = 2 ──────────────────────────────────────────────
+  - path: patches/hpa-min-replicas.yaml
+    target:
+      kind: HorizontalPodAutoscaler
+      name: api-gateway-hpa
+
+  - path: patches/hpa-min-replicas.yaml
+    target:
+      kind: HorizontalPodAutoscaler
+      name: rental-service-hpa
+
+  - path: patches/hpa-min-replicas.yaml
+    target:
+      kind: HorizontalPodAutoscaler
+      name: ledger-service-hpa
+
+  # ── ingress: qa hostname + TLS ─────────────────────────────────────────────
+  - path: patches/ingress-qa.yaml
+    target:
+      kind: Ingress
+      name: api-gateway-ingress

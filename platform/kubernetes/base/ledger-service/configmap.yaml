@@ -2,11 +2,15 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: ledger-service-config
-  namespace: rental-dev
   labels:
     app: ledger-service
     project: rentalAppLedger
 data:
   LOG_LEVEL: "INFO"
-  DB_HOST: "postgresql.rental-dev.svc.cluster.local"
-  ENVIRONMENT: "dev"
+  DJANGO_SETTINGS_MODULE: "config.settings.base"
+  SERVICE_PORT: "8002"
+  GUNICORN_WORKERS: "2"
+  GUNICORN_TIMEOUT: "60"
+  # Report generation settings
+  REPORT_PAGE_SIZE: "100"
+  LEDGER_OVERDUE_GRACE_DAYS: "5"

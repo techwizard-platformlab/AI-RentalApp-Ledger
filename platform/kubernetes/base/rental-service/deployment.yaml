@@ -2,11 +2,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: rental-service
-  namespace: rental-dev
   labels:
     app: rental-service
-    version: "1.0.0"
-    environment: dev
     project: rentalAppLedger
   annotations:
     argocd.argoproj.io/sync-wave: "2"
@@ -19,14 +16,13 @@ spec:
     metadata:
       labels:
         app: rental-service
-        version: "1.0.0"
-        environment: dev
         project: rentalAppLedger
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8001"
         prometheus.io/path: "/metrics"
     spec:
+      serviceAccountName: rental-service
       securityContext:
         runAsNonRoot: true
         runAsUser: 1001
@@ -40,11 +36,22 @@ spec:
         - name: acr-pull-secret
       containers:
         - name: rental-service
-          image: "rental-app-ledger:latest"
+          image: rental-app-ledger:latest
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 8001
+            - name: http
+              containerPort: 8001
               protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: rental-service-config
+            - secretRef:
+                name: rental-service-secret
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           resources:
             requests:
               cpu: 100m
@@ -52,11 +59,6 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
-          envFrom:
-            - configMapRef:
-                name: rental-service-config
-            - secretRef:
-                name: rental-service-secret
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -66,16 +68,22 @@ spec:
             httpGet:
               path: /health
               port: 8001
-            initialDelaySeconds: 10
-            periodSeconds: 5
+            initialDelaySeconds: 15
+            periodSeconds: 10
             failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /health
               port: 8001
             initialDelaySeconds: 30
-            periodSeconds: 10
+            periodSeconds: 15
             failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            failureThreshold: 10
+            periodSeconds: 5
           volumeMounts:
             - mountPath: /tmp
               name: tmp-dir

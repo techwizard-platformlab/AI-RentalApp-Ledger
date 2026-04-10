@@ -4,21 +4,63 @@ kind: Kustomization
 namespace: rental-dev
 
 resources:
+  - namespace.yaml
   - ../../base/api-gateway
   - ../../base/rental-service
   - ../../base/ledger-service
   - ../../base/notification-service
+  - ../../base/rag-api
 
+# Apply environment label to all resources
 labels:
   - pairs:
       environment: dev
     includeSelectors: false
+    includeTemplates: true
 
-# placeholder.azurecr.io is a syntactically valid image reference (lowercase, dots)
-# that the argocd-bootstrap workflow replaces with the real ACR login server on each deploy.
-# The sed pattern matches [a-z0-9]+\.azurecr\.io so this placeholder is always substituted.
-# Pods will be in ImagePullBackOff until bootstrap runs — that is expected.
+# Image tags — updated by ArgoCD Image Updater after each CI push
 images:
   - name: rental-app-ledger
     newName: placeholder.azurecr.io/rental-app-ledger
     newTag: latest
+  - name: rental-rag-api
+    newName: placeholder.azurecr.io/rental-rag-api
+    newTag: latest
+
+# Env-specific patches — configmaps, resource tuning
+patches:
+  # ── api-gateway config ─────────────────────────────────────────────────────
+  - path: patches/api-gateway-config.yaml
+    target:
+      kind: ConfigMap
+      name: api-gateway-config
+
+  # ── rental-service config ──────────────────────────────────────────────────
+  - path: patches/rental-service-config.yaml
+    target:
+      kind: ConfigMap
+      name: rental-service-config
+
+  # ── ledger-service config ──────────────────────────────────────────────────
+  - path: patches/ledger-service-config.yaml
+    target:
+      kind: ConfigMap
+      name: ledger-service-config
+
+  # ── notification-service config ────────────────────────────────────────────
+  - path: patches/notification-service-config.yaml
+    target:
+      kind: ConfigMap
+      name: notification-service-config
+
+  # ── rag-api config ─────────────────────────────────────────────────────────
+  - path: patches/rag-api-config.yaml
+    target:
+      kind: ConfigMap
+      name: rag-api-config
+
+  # ── ingress: dev hostname ──────────────────────────────────────────────────
+  - path: patches/ingress-dev.yaml
+    target:
+      kind: Ingress
+      name: api-gateway-ingress

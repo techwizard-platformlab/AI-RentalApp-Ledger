@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ledger-service-config
+data:
+  ENVIRONMENT: "dev"
+  LOG_LEVEL: "DEBUG"
+  DJANGO_SETTINGS_MODULE: "config.settings.dev"
+  DEBUG: "true"
+  GUNICORN_WORKERS: "1"
+  REPORT_PAGE_SIZE: "20"
+  LEDGER_OVERDUE_GRACE_DAYS: "7"

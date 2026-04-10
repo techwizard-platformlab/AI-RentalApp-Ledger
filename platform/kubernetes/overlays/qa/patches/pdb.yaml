@@ -1,0 +1,52 @@
+# PodDisruptionBudgets — ensures at least 1 pod stays up during node drain / rolling updates
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api-gateway-pdb
+  labels:
+    app: api-gateway
+    project: rentalAppLedger
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: api-gateway
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rental-service-pdb
+  labels:
+    app: rental-service
+    project: rentalAppLedger
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: rental-service
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ledger-service-pdb
+  labels:
+    app: ledger-service
+    project: rentalAppLedger
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: ledger-service
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: notification-service-pdb
+  labels:
+    app: notification-service
+    project: rentalAppLedger
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: notification-service
