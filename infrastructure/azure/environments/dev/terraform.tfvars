@@ -13,8 +13,9 @@ location    = "eastus"
 
 # ── Database engine ───────────────────────────────────────────────────────────
 # Options: "postgresql" (default) | "mssql"
-# To switch to Azure SQL, change db_engine to "mssql" — only that module deploys.
-db_engine = "mssql"
+# Note: Azure SQL (mssql) provisioning is restricted in eastus for this subscription.
+# Use postgresql. Switch to mssql only if subscription limits are lifted.
+db_engine = "postgresql"
 
 # ── PostgreSQL Flexible Server (active when db_engine = "postgresql") ─────────
 # B_Standard_B1ms — 1 vCore Burstable, ~$12/month

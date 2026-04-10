@@ -1,7 +1,17 @@
 # Storage Account — Standard_LRS is cheapest (no redundancy needed for app data in dev)
 # Cost note: Standard_LRS ~$0.018/GB/month. ZRS/GRS are more expensive — skip for learning.
+#
+# Name format: {env}{location_short}sa{suffix}{random4}
+# random_string ensures global uniqueness across subscriptions/redeployments.
+
+resource "random_string" "sa_suffix" {
+  length  = 4
+  upper   = false
+  special = false
+}
+
 resource "azurerm_storage_account" "this" {
-  name                     = "${var.environment}${var.location_short}sa${var.suffix}" # globally unique
+  name                     = "${var.environment}${var.location_short}sa${var.suffix}${random_string.sa_suffix.result}"
   location                 = var.location
   resource_group_name      = var.resource_group_name
   account_tier             = "Standard"
