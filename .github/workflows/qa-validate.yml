@@ -79,18 +79,36 @@ jobs:
             --region us-central1 \
             --project ${{ secrets.GCP_PROJECT_ID }}
 
-      # ── Port-forward services for testing ─────────────────────────────────
+      # ── Wait for app pods, then port-forward services for testing ────────────
+      - name: Wait for deployments ready
+        run: |
+          NS="rental-${{ inputs.environment || 'dev' }}"
+          for deploy in api-gateway rental-service ledger-service notification-service rag-api; do
+            echo "Waiting for $deploy..."
+            kubectl rollout status deployment/"$deploy" -n "$NS" --timeout=5m || true
+          done
+
       - name: Port-forward API Gateway
         run: |
           NS="rental-${{ inputs.environment || 'dev' }}"
+          # Kill any existing port-forward on 8000 to avoid "local port not available"
+          fuser -k 8000/tcp 2>/dev/null || true
           kubectl port-forward -n "${NS}" svc/api-gateway 8000:80 &
-          sleep 5
+          # Wait for port to be open rather than fixed sleep
+          for i in $(seq 1 15); do
+            nc -z localhost 8000 2>/dev/null && echo "api-gateway ready" && break
+            sleep 2
+          done
 
       - name: Port-forward RAG API
         run: |
           NS="rental-${{ inputs.environment || 'dev' }}"
+          fuser -k 8080/tcp 2>/dev/null || true
           kubectl port-forward -n "${NS}" svc/rag-api 8080:8080 &
-          sleep 3
+          for i in $(seq 1 15); do
+            nc -z localhost 8080 2>/dev/null && echo "rag-api ready" && break
+            sleep 2
+          done
 
       # ── Run BDD tests ──────────────────────────────────────────────────────
       - name: Run smoke tests

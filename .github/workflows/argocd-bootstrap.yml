@@ -287,25 +287,32 @@ jobs:
             --timeout 10m \
             --wait
 
-      # ── Wait for ArgoCD server to get external IP ───────────────────────────
+      # ── Wait for ArgoCD server pod ready, then get external IP ────────────────
       - name: Wait for ArgoCD LoadBalancer IP
         if: github.event.inputs.action == 'install' || github.event.inputs.action == 'upgrade'
         id: argocd_ip
         run: |
-          echo "Waiting for ArgoCD server external IP..."
-          for i in $(seq 1 30); do
+          # Wait for the deployment itself to be ready before polling for IP
+          echo "Waiting for argocd-server deployment..."
+          kubectl rollout status deployment/argocd-server \
+            -n "${{ env.NAMESPACE_ARGOCD }}" --timeout=8m
+
+          echo "Waiting for LoadBalancer external IP..."
+          for i in $(seq 1 36); do
             IP=$(kubectl get svc argocd-server -n "${{ env.NAMESPACE_ARGOCD }}" \
               -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+            [ -z "$IP" ] && IP=$(kubectl get svc argocd-server -n "${{ env.NAMESPACE_ARGOCD }}" \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
             if [ -n "$IP" ]; then
               echo "ip=$IP" >> "$GITHUB_OUTPUT"
-              echo "ArgoCD IP: $IP"
+              echo "ArgoCD endpoint: $IP"
               break
             fi
-            echo "Attempt $i/30 — waiting 10s..."
+            echo "Attempt $i/36 — waiting 10s..."
             sleep 10
           done
           if [ -z "$IP" ]; then
-            echo "::error::ArgoCD LoadBalancer did not get an external IP after 5 minutes"
+            echo "::error::ArgoCD LoadBalancer did not get an external IP/hostname after 6 minutes"
             exit 1
           fi
 
@@ -321,8 +328,8 @@ jobs:
           kubectl create secret generic argocd-repo-ai-rentalapp-ledger \
             --namespace "${{ env.NAMESPACE_ARGOCD }}" \
             --from-literal=type=git \
-            --from-literal=url=https://github.com/techwizard-platformlab/AI-RentalApp-Ledger \
-            --from-literal=username=techwizard-platformlab \
+            --from-literal=url=https://github.com/Ramprasath26/AI-RentalApp-Ledger \
+            --from-literal=username=Ramprasath26 \
             --from-literal=password="${{ secrets.ARGOCD_GITHUB_PAT }}" \
             --dry-run=client -o json \
           | jq '.metadata.labels["argocd.argoproj.io/secret-type"] = "repository"' \
@@ -379,5 +386,5 @@ jobs:
           echo "1. Open https://${{ steps.argocd_ip.outputs.ip }} in your browser (accept cert warning)" >> "$GITHUB_STEP_SUMMARY"
           echo "2. Login with admin / password above" >> "$GITHUB_STEP_SUMMARY"
           echo "3. GitOps repo is already registered — app should show Synced" >> "$GITHUB_STEP_SUMMARY"
-          echo "4. Run the CI workflow (techwizard-platformlab/RentalApp-Build) with registry: acr to push the first image" >> "$GITHUB_STEP_SUMMARY"
+          echo "4. Run the CI workflow (Ramprasath26/RentalApp-Build) with registry: acr to push the first image" >> "$GITHUB_STEP_SUMMARY"
           echo "5. ArgoCD will auto-sync and deploy the app" >> "$GITHUB_STEP_SUMMARY"

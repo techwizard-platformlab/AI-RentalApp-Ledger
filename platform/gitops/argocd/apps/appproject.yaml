@@ -10,7 +10,7 @@ spec:
 
   # Only allow syncing from the rentalAppLedger app repo
   sourceRepos:
-    - "https://github.com/techwizard-platformlab/AI-RentalApp-Ledger"
+    - "https://github.com/Ramprasath26/AI-RentalApp-Ledger"
 
   # Only deploy to rental-dev and rental-qa namespaces
   destinations:

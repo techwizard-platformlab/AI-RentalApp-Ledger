@@ -300,7 +300,7 @@ if __name__ == "__main__":
     env_file = Path(__file__).parent / ".env"
     env      = load_env(env_file)
 
-    owner         = env.get("GITHUB_ORG",  "techwizard-platformlab")
+    owner         = env.get("GITHUB_ORG",  "Ramprasath26")
     platform_repo = env.get("GITHUB_REPO", "AI-RentalApp-Ledger")
     build_repo    = env.get("BUILD_REPO",  "RentalApp-Build")
 
