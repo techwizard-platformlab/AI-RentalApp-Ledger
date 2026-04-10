@@ -268,7 +268,6 @@ jobs:
       - name: Terraform plan
         id: plan
         run: terraform plan -out=tfplan.binary -no-color 2>&1 | tee plan.txt
-        continue-on-error: true
 
       - name: Convert plan to JSON
         run: terraform show -json tfplan.binary > tfplan.json
@@ -459,7 +458,6 @@ jobs:
       - name: Terraform plan
         id: plan
         run: terraform plan -out=tfplan.binary -no-color 2>&1 | tee plan.txt
-        continue-on-error: true
 
       - name: Convert plan to JSON
         run: terraform show -json tfplan.binary > tfplan.json
@@ -589,15 +587,9 @@ jobs:
     if: |
       needs.setup.outputs.scheduled == 'false' &&
       needs.setup.outputs.run_azure == 'true' &&
-      (
-        needs.setup.outputs.action == 'destroy' ||
-        (
-          needs.setup.outputs.action == 'apply' &&
-          needs.azure_plan.result == 'success' &&
-          needs.azure_plan.outputs.has_destroys == 'true'
-        )
-      )
-    environment: terraform-destructive-approval
+      needs.azure_plan.result == 'success' &&
+      (needs.setup.outputs.action == 'apply' || needs.setup.outputs.action == 'destroy')
+    environment: ${{ (needs.azure_plan.outputs.has_destroys == 'true' || needs.setup.outputs.action == 'destroy') && 'terraform-destructive-approval' || 'shared' }}
 
     steps:
       - name: Summarise what will be destroyed
@@ -643,7 +635,10 @@ jobs:
       needs.setup.outputs.run_azure == 'true' &&
       needs.setup.outputs.action != 'plan' &&
       (needs.azure_plan.result == 'success' || needs.azure_plan.result == 'skipped') &&
-      (needs.azure_approve.result == 'success' || needs.azure_approve.result == 'skipped')
+      (
+        needs.azure_approve.result == 'success' ||
+        (needs.azure_approve.result == 'skipped' && needs.setup.outputs.scheduled == 'true')
+      )
 
     defaults:
       run:
@@ -797,7 +792,6 @@ jobs:
       - name: Terraform plan
         id: plan
         run: terraform plan -out=tfplan.binary -no-color 2>&1 | tee plan.txt
-        continue-on-error: true
 
       - name: Convert plan to JSON
         run: terraform show -json tfplan.binary > tfplan.json
