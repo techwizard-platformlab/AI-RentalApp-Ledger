@@ -50,8 +50,9 @@ variable "aks_subnet_cidr" {
 }
 
 variable "key_vault_name" {
-  description = "Name of the Key Vault (used with az CLI local-exec to avoid RBAC role assignment requirement)"
+  description = "Name of the Key Vault where DB secrets are stored. Null when shared layer has not yet run — secrets are written on the next apply once Key Vault exists."
   type        = string
+  default     = null
 }
 
 variable "tags" {

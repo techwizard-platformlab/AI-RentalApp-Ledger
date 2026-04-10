@@ -48,8 +48,9 @@ variable "aks_subnet_cidr" {
 }
 
 variable "key_vault_id" {
-  description = "Resource ID of the Key Vault where secrets will be stored"
+  description = "Resource ID of the Key Vault where DB secrets are stored. Null when shared layer has not yet run — secrets are written on the next apply once Key Vault exists."
   type        = string
+  default     = null
 }
 
 variable "tags" {
