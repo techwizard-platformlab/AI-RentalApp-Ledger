@@ -13,7 +13,7 @@
 
 locals {
   env            = var.environment
-  location_short = "eus"
+  location_short = "eus2"
 
   env_config = {
     dev = {

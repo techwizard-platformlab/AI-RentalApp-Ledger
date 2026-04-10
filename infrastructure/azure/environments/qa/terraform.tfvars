@@ -9,7 +9,7 @@
 # =============================================================================
 
 environment = "qa"
-location    = "eastus"
+location    = "eastus2"
 
 # ── Database engine ───────────────────────────────────────────────────────────
 # Options: "postgresql" (default) | "mssql"

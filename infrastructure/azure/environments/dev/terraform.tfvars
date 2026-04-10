@@ -9,12 +9,12 @@
 # =============================================================================
 
 environment = "dev"
-location    = "eastus"
+location    = "eastus2"
 
 # ── Database engine ───────────────────────────────────────────────────────────
 # Options: "postgresql" (default) | "mssql"
-# Note: Azure SQL (mssql) provisioning is restricted in eastus for this subscription.
-# Use postgresql. Switch to mssql only if subscription limits are lifted.
+# Note: Both mssql and postgresql provisioning are restricted in eastus for this subscription.
+# Using eastus2 which allows PostgreSQL Flexible Server.
 db_engine = "postgresql"
 
 # ── PostgreSQL Flexible Server (active when db_engine = "postgresql") ─────────
