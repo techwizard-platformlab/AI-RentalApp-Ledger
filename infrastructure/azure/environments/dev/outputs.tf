@@ -1,9 +1,9 @@
 output "vnet_id"              { value = module.vnet.id }
 output "aks_name"             { value = module.aks.name }
-output "acr_name"             { value = data.azurerm_container_registry.shared.name }
-output "acr_login_server"     { value = data.azurerm_container_registry.shared.login_server }
-output "key_vault_name"       { value = data.azurerm_key_vault.shared.name }
-output "key_vault_uri"        { value = data.azurerm_key_vault.shared.vault_uri }
+output "acr_name"             { value = local.shared_ready ? data.azurerm_container_registry.shared[0].name : null }
+output "acr_login_server"     { value = local.shared_ready ? data.azurerm_container_registry.shared[0].login_server : null }
+output "key_vault_name"       { value = local.shared_ready ? data.azurerm_key_vault.shared[0].name : null }
+output "key_vault_uri"        { value = local.shared_ready ? data.azurerm_key_vault.shared[0].vault_uri : null }
 output "lb_public_ip"         { value = module.load_balancer.public_ip_address }
 output "storage_account_name" { value = module.storage_account.name }
 
