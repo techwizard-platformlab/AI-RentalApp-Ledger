@@ -76,6 +76,10 @@ resource "azurerm_kubernetes_cluster_node_pool" "appnode" {
   os_disk_size_gb       = var.os_disk_size_gb
   mode                  = "User"   # User pool: application workloads only
 
+  auto_scaling_enabled = true
+  min_count            = 1
+  max_count            = 3
+
   node_labels = {
     "nodepool" = "appnode"
   }
