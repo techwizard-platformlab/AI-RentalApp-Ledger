@@ -62,3 +62,31 @@ resource "azurerm_key_vault" "shared" {
   rbac_authorization_enabled = true
   tags                       = local.tags
 }
+
+# ── Key Vault role assignments ────────────────────────────────────────────────
+# Key Vault Secrets Officer: read + write secrets.
+# Assigned to the GitHub Actions OIDC service principal so bootstrap workflows
+# (argocd-bootstrap, etc.) can auto-generate and store secrets (e.g. Grafana
+# admin password) without manual intervention.
+resource "azurerm_role_assignment" "github_actions_kv_secrets_officer" {
+  scope                = azurerm_key_vault.shared.id
+  role_definition_name = "Key Vault Secrets Officer"
+  principal_id         = var.github_actions_principal_id
+}
+
+# Key Vault Secrets User: read-only access for application workloads (AKS pods).
+# Assigned to the AKS kubelet managed identity so pods can read secrets directly
+# from Key Vault via CSI driver or workload identity (future use).
+# principal_id resolved at apply time via data source — requires aks_name var.
+data "azurerm_kubernetes_cluster" "dev" {
+  count               = var.aks_name != "" ? 1 : 0
+  name                = var.aks_name
+  resource_group_name = var.aks_resource_group_name
+}
+
+resource "azurerm_role_assignment" "aks_kv_secrets_user" {
+  count                = var.aks_name != "" ? 1 : 0
+  scope                = azurerm_key_vault.shared.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = data.azurerm_kubernetes_cluster.dev[0].kubelet_identity[0].object_id
+}
