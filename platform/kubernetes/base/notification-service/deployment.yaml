@@ -61,14 +61,14 @@ spec:
               drop: [ALL]
           readinessProbe:
             httpGet:
-              path: /health
+              path: /healthz
               port: 8003
             initialDelaySeconds: 10
             periodSeconds: 10
             failureThreshold: 3
           livenessProbe:
             httpGet:
-              path: /health
+              path: /healthz
               port: 8003
             initialDelaySeconds: 20
             periodSeconds: 15
