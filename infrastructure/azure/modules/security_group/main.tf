@@ -35,6 +35,36 @@ resource "azurerm_network_security_rule" "allow_http_inbound" {
   network_security_group_name = azurerm_network_security_group.this.name
 }
 
+# Allow intra-VNet traffic (Required for AKS Node-to-Node and Control Plane tunnels)
+resource "azurerm_network_security_rule" "allow_vnet_inbound" {
+  name                        = "allow-vnet-inbound"
+  priority                    = 120
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
+  source_address_prefix       = "VirtualNetwork"
+  destination_address_prefix  = "VirtualNetwork"
+  resource_group_name         = var.resource_group_name
+  network_security_group_name = azurerm_network_security_group.this.name
+}
+
+# Allow Azure Load Balancer health probes
+resource "azurerm_network_security_rule" "allow_lb_inbound" {
+  name                        = "allow-loadbalancer-inbound"
+  priority                    = 130
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
+  source_address_prefix       = "AzureLoadBalancer"
+  destination_address_prefix  = "*"
+  resource_group_name         = var.resource_group_name
+  network_security_group_name = azurerm_network_security_group.this.name
+}
+
 # Deny all other inbound traffic
 resource "azurerm_network_security_rule" "deny_all_inbound" {
   name                        = "deny-all-inbound"
