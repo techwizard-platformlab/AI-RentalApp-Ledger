@@ -71,7 +71,6 @@ resource "azurerm_kubernetes_cluster_node_pool" "appnode" {
   name                  = "appnode"
   kubernetes_cluster_id = azurerm_kubernetes_cluster.this.id
   vm_size               = var.appnode_vm_size
-  node_count            = var.appnode_node_count
   vnet_subnet_id        = var.subnet_id
   os_disk_size_gb       = var.os_disk_size_gb
   mode                  = "User"   # User pool: application workloads only
