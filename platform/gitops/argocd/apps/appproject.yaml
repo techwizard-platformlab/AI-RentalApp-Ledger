@@ -40,6 +40,8 @@ spec:
       kind: HorizontalPodAutoscaler
     - group: ""
       kind: ConfigMap
+    - group: ""
+      kind: ServiceAccount
 
   # Orphaned resource monitoring — warn on resources not managed by ArgoCD
   orphanedResources:

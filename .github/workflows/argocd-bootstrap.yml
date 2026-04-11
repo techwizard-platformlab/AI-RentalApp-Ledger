@@ -239,7 +239,7 @@ jobs:
             DB_SSLMODE="require"
           fi
 
-          for SVC in api-gateway rental-service ledger-service notification-service; do
+          for SVC in api-gateway rental-service ledger-service notification-service rag-api; do
             kubectl create secret generic "${SVC}-secret" \
               --namespace "$NS" \
               --from-literal=SECRET_KEY="$SECRET_KEY" \
