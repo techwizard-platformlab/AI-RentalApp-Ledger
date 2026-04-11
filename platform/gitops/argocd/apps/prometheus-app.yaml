@@ -1,0 +1,58 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+  labels:
+    project: rentalAppLedger
+    tier: platform
+    component: monitoring
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"   # Install after Istio (metrics collection)
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform-addons
+
+  source:
+    repoURL: "https://prometheus-community.github.io/helm-charts"
+    chart: kube-prometheus-stack
+    targetRevision: "61.3.2"   # Latest stable as of 2026 Q1
+    helm:
+      releaseName: kube-prometheus-stack
+      # Reference the values file committed to the repo
+      valueFiles:
+        - "$values/platform/observability/monitoring/helm/prometheus-values.yaml"
+
+  # Multi-source: Helm chart from community + values file from our git repo
+  sources:
+    - repoURL: "https://prometheus-community.github.io/helm-charts"
+      chart: kube-prometheus-stack
+      targetRevision: "61.3.2"
+      helm:
+        releaseName: kube-prometheus-stack
+        valueFiles:
+          - "$values/platform/observability/monitoring/helm/prometheus-values.yaml"
+    - repoURL: "https://github.com/techwizard-platformlab/AI-RentalApp-Ledger"
+      targetRevision: main
+      ref: values   # Available as $values in valueFiles above
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true   # Required for large CRDs from prometheus operator
+    retry:
+      limit: 3
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
+
+  revisionHistoryLimit: 3

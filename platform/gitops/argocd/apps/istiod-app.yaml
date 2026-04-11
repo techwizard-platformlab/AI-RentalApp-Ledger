@@ -1,0 +1,74 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: istiod
+  namespace: argocd
+  labels:
+    project: rentalAppLedger
+    tier: platform
+    component: istio
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"   # Install after istio-base CRDs
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform-addons
+
+  source:
+    repoURL: "https://istio-release.storage.googleapis.com/charts"
+    chart: istiod
+    targetRevision: "1.21.2"
+    helm:
+      releaseName: istiod
+      values: |
+        global:
+          # Resource profile: minimal — suitable for dev (1-node B2s/D2s cluster)
+          proxy:
+            resources:
+              requests:
+                cpu: 10m
+                memory: 40Mi
+              limits:
+                cpu: 200m
+                memory: 128Mi
+
+        pilot:
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          # Disable auto-injection by default — enable per-namespace when ready
+          # (label namespace with: istio-injection=enabled)
+          autoscaleEnabled: false
+          replicaCount: 1
+
+        # Disable telemetry addons (we use kube-prometheus-stack instead)
+        telemetry:
+          enabled: true
+          v2:
+            enabled: true
+            prometheus:
+              enabled: true   # Expose Istio metrics to Prometheus
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: istio-system
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 2m
+
+  revisionHistoryLimit: 3

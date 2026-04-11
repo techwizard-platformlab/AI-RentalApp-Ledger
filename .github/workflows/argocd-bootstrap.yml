@@ -23,7 +23,18 @@ on:
           - install        # Full install: ArgoCD + PostgreSQL + AppProject + Application
           - upgrade        # Helm upgrade only (keep ArgoCD apps)
           - apply-apps     # Apply AppProject + Application only (ArgoCD already running)
+          - apply-addons   # Deploy platform add-ons (Istio, Prometheus/Grafana) via ArgoCD
           - uninstall      # Remove ArgoCD namespace entirely
+
+      addons:
+        description: "Add-ons to deploy (only used when action=apply-addons)"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all             # Deploy all add-ons: Istio + Prometheus/Grafana
+          - istio           # Istio service mesh only
+          - prometheus      # Prometheus + Grafana + Alertmanager only
 
       db_mode:
         description: "Database backend to use"
@@ -337,18 +348,108 @@ jobs:
 
       # ── Apply AppProject ────────────────────────────────────────────────────
       - name: Apply ArgoCD AppProject
-        if: github.event.inputs.action != 'uninstall'
+        if: github.event.inputs.action != 'uninstall' && github.event.inputs.action != 'apply-addons'
         run: |
           kubectl apply -f platform/gitops/argocd/apps/appproject.yaml
 
       # ── Apply Application (with ACR login server substituted) ───────────────
       - name: Apply ArgoCD Application
-        if: github.event.inputs.action != 'uninstall'
+        if: github.event.inputs.action != 'uninstall' && github.event.inputs.action != 'apply-addons'
         run: |
           ACR_SERVER="${{ steps.acr.outputs.login_server }}"
           sed "s|ACR_LOGIN_SERVER|${ACR_SERVER}|g" \
             platform/gitops/argocd/apps/app-${{ github.event.inputs.environment }}.yaml \
             | kubectl apply -f -
+
+      # ── Apply Platform Add-ons via ArgoCD ────────────────────────────────────
+      # Creates ArgoCD Application CRDs — ArgoCD then handles Helm install automatically.
+      # Grafana admin password is fetched from Key Vault and stored as a K8s Secret
+      # before the Application is applied so Grafana can start up without manual intervention.
+      - name: Create Grafana admin secret from Key Vault
+        if: |
+          github.event.inputs.action == 'apply-addons' &&
+          (github.event.inputs.addons == 'all' || github.event.inputs.addons == 'prometheus')
+        run: |
+          KV_NAME=$(az keyvault list \
+            --resource-group "${{ secrets.TF_BACKEND_RG }}" \
+            --query "[0].name" -o tsv)
+
+          # Fetch Grafana password — auto-generate and store if not yet set
+          GRAFANA_PASS=$(az keyvault secret show \
+            --vault-name "$KV_NAME" --name "grafana-admin-password" \
+            --query value -o tsv 2>/dev/null || echo "")
+
+          if [ -z "$GRAFANA_PASS" ]; then
+            GRAFANA_PASS=$(openssl rand -base64 24 | tr -d '/+=')
+            az keyvault secret set \
+              --vault-name "$KV_NAME" \
+              --name "grafana-admin-password" \
+              --value "$GRAFANA_PASS" \
+              --output none
+            echo "Generated and stored new Grafana admin password in Key Vault."
+          else
+            echo "Using existing Grafana admin password from Key Vault."
+          fi
+
+          kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl create secret generic grafana-admin-secret \
+            --namespace monitoring \
+            --from-literal=admin-user=admin \
+            --from-literal=admin-password="$GRAFANA_PASS" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "::notice::Grafana admin password stored in Key Vault secret: grafana-admin-password"
+
+      - name: Apply platform AppProject
+        if: github.event.inputs.action == 'apply-addons'
+        run: |
+          kubectl apply -f platform/gitops/argocd/apps/platform-project.yaml
+
+      - name: Deploy Istio via ArgoCD
+        if: |
+          github.event.inputs.action == 'apply-addons' &&
+          (github.event.inputs.addons == 'all' || github.event.inputs.addons == 'istio')
+        run: |
+          kubectl apply -f platform/gitops/argocd/apps/istio-base-app.yaml
+          echo "Waiting 30s for istio-base CRDs to be established before istiod..."
+          sleep 30
+          kubectl apply -f platform/gitops/argocd/apps/istiod-app.yaml
+          echo "::notice::Istio Applications submitted to ArgoCD — monitor sync at https://20.85.34.239"
+
+      - name: Deploy Prometheus/Grafana via ArgoCD
+        if: |
+          github.event.inputs.action == 'apply-addons' &&
+          (github.event.inputs.addons == 'all' || github.event.inputs.addons == 'prometheus')
+        run: |
+          kubectl apply -f platform/gitops/argocd/apps/prometheus-app.yaml
+          echo "::notice::kube-prometheus-stack Application submitted to ArgoCD — sync takes ~3-5 minutes"
+
+      - name: Add-ons summary
+        if: github.event.inputs.action == 'apply-addons'
+        run: |
+          echo "## Platform Add-ons Deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Add-on | Status | Namespace |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|--------|-----------|" >> "$GITHUB_STEP_SUMMARY"
+          ADDONS="${{ github.event.inputs.addons }}"
+          if [[ "$ADDONS" == "all" || "$ADDONS" == "istio" ]]; then
+            echo "| Istio (base + istiod) | Syncing via ArgoCD | \`istio-system\` |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ "$ADDONS" == "all" || "$ADDONS" == "prometheus" ]]; then
+            echo "| Prometheus + Grafana + Alertmanager | Syncing via ArgoCD | \`monitoring\` |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Access Grafana" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80" >> "$GITHUB_STEP_SUMMARY"
+          echo "# Open: http://localhost:3000  (admin / password from Key Vault: grafana-admin-password)" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Enable Istio Sidecar Injection (when ready)" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "kubectl label namespace rental-dev istio-injection=enabled --overwrite" >> "$GITHUB_STEP_SUMMARY"
+          echo "kubectl rollout restart deployment -n rental-dev" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
 
       # ── Uninstall ───────────────────────────────────────────────────────────
       - name: Uninstall ArgoCD
