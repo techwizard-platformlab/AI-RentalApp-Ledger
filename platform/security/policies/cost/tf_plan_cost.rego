@@ -1,5 +1,6 @@
 package cost_tfplan
 
+import future.keywords.contains
 import future.keywords.if
 import future.keywords.in
 
@@ -176,7 +177,7 @@ total_estimated_cost := sum([entry.cost | entry := cost_breakdown[_]])
 # =============================================================================
 # RULE: Deny if total estimated cost exceeds monthly budget
 # =============================================================================
-deny[msg] if {
+deny contains msg if {
   total_estimated_cost > deny_threshold
   top_entries := top3_by_cost
   msg := sprintf(
@@ -188,7 +189,7 @@ deny[msg] if {
 # =============================================================================
 # RULE: Warn if cost is in amber zone
 # =============================================================================
-warn[msg] if {
+warn contains msg if {
   total_estimated_cost >= warn_threshold
   total_estimated_cost <= deny_threshold
   msg := sprintf(
@@ -200,7 +201,7 @@ warn[msg] if {
 # =============================================================================
 # RULE: Warn if any single resource exceeds the per-resource threshold
 # =============================================================================
-warn[msg] if {
+warn contains msg if {
   entry := cost_breakdown[_]
   entry.cost > per_resource_warn_usd
   msg := sprintf(

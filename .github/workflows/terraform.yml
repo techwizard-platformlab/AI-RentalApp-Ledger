@@ -623,7 +623,7 @@ jobs:
   # so a required reviewer MUST approve before terraform executes.
   # ===========================================================================
   azure_approve:
-    name: "⚠️ Approve — Azure ${{ needs.setup.outputs.env }} ${{ needs.setup.outputs.action }} (${{ needs.setup.outputs.scope }})"
+    name: "Approve — Azure"
     runs-on: ubuntu-latest
     needs: [setup, azure_plan]
     if: |
@@ -676,7 +676,7 @@ jobs:
   #          full         → terraform destroy -auto-approve
   # ===========================================================================
   azure_apply:
-    name: "Azure ${{ needs.setup.outputs.action == 'destroy' && 'Destroy' || 'Apply' }} / ${{ needs.setup.outputs.env }}"
+    name: "Azure Apply / Destroy"
     runs-on: ubuntu-latest
     needs: [setup, azure_plan, azure_approve]
     if: |
@@ -961,7 +961,7 @@ jobs:
   #   • plan-only runs
   # ===========================================================================
   gcp_approve:
-    name: "⚠️ Approve — GCP ${{ needs.setup.outputs.env }} ${{ needs.setup.outputs.action }} (${{ needs.setup.outputs.scope }})"
+    name: "Approve — GCP"
     runs-on: ubuntu-latest
     needs: [setup, gcp_plan]
     if: |
