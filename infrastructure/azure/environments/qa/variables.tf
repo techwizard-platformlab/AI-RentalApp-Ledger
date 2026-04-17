@@ -1,12 +1,13 @@
 # =============================================================================
 # Variable sources:
-#   terraform.tfvars              → environment, location, db_engine, db sizing
+#   terraform.tfvars              → environment, location, networking, compute,
+#                                   db_engine, db sizing, budget
 #   GitHub Secret → TF_VAR_*     → env_resource_group_name, shared_resource_group_name,
 #                                   subscription_id, acr_name, github_actions_principal_id
 # =============================================================================
 
 variable "environment" {
-  description = "Deployment environment — set in terraform.tfvars"
+  description = "Deployment environment — set in terraform.tfvars."
   type        = string
   validation {
     condition     = contains(["dev", "qa", "uat", "prod"], var.environment)
@@ -15,8 +16,26 @@ variable "environment" {
 }
 
 variable "location" {
-  type    = string
-  default = "eastus"
+  description = "Azure region for all resources in this environment."
+  type        = string
+  default     = "eastus2"
+}
+
+variable "location_short" {
+  description = "Short location code used in resource name suffixes (e.g. eus2). Required — set in terraform.tfvars."
+  type        = string
+}
+
+variable "project" {
+  description = "Project name applied to the 'project' resource tag."
+  type        = string
+  default     = "rentalAppLedger"
+}
+
+variable "owner" {
+  description = "Owning team applied to the 'owner' resource tag."
+  type        = string
+  default     = "techwizard-platformlab"
 }
 
 variable "env_resource_group_name" {
@@ -30,30 +49,72 @@ variable "shared_resource_group_name" {
 }
 
 variable "subscription_id" {
-  type      = string
-  sensitive = true
+  description = "Azure subscription ID — injected via TF_VAR_subscription_id."
+  type        = string
+  sensitive   = true
 }
 
 variable "acr_name" {
-  description = "Shared ACR name (from infrastructure/azure/shared/ outputs) — injected via TF_VAR_acr_name"
+  description = "Shared ACR name (from infrastructure/azure/shared/ outputs) — injected via TF_VAR_acr_name."
   type        = string
 }
 
 variable "github_actions_principal_id" {
-  description = "Object ID of the GitHub Actions OIDC SP — grants Key Vault Secrets Officer."
+  description = "Object ID of the GitHub Actions OIDC service principal — grants Key Vault Secrets Officer."
   type        = string
   sensitive   = true
 }
 
 variable "alert_emails" {
-  type    = list(string)
-  default = []
+  description = "Email addresses to notify when budget thresholds are breached."
+  type        = list(string)
+  default     = []
+}
+
+# ── Networking ────────────────────────────────────────────────────────────────
+
+variable "vnet_cidr" {
+  description = "Address space for the environment virtual network (e.g. 10.1.0.0/16)."
+  type        = string
+}
+
+variable "subnet_cidrs" {
+  description = "Map of subnet name to CIDR block. Expected keys: aks, ingress, data."
+  type        = map(string)
+}
+
+# ── Compute ───────────────────────────────────────────────────────────────────
+
+variable "aks_node_count" {
+  description = "Number of nodes in the AKS default node pool."
+  type        = number
+  default     = 1
+}
+
+variable "aks_vm_size" {
+  description = "VM SKU for the AKS node pool (e.g. Standard_B2s)."
+  type        = string
+  default     = "Standard_D2s_v3"
+}
+
+variable "aks_os_disk_gb" {
+  description = "OS disk size in GiB for each AKS node."
+  type        = number
+  default     = 30
+}
+
+variable "kubernetes_version" {
+  description = "Kubernetes version to pin the AKS cluster to. Null lets Azure manage upgrades."
+  type        = string
+  default     = null
 }
 
 # ── Database engine selection ─────────────────────────────────────────────────
+
 variable "db_engine" {
-  type    = string
-  default = "postgresql"
+  description = "Database engine to deploy — exactly one of 'postgresql' or 'mssql'."
+  type        = string
+  default     = "postgresql"
   validation {
     condition     = contains(["postgresql", "mssql"], var.db_engine)
     error_message = "db_engine must be 'postgresql' or 'mssql'."
@@ -61,26 +122,52 @@ variable "db_engine" {
 }
 
 variable "postgresql_sku" {
-  type    = string
-  default = "B_Standard_B1ms"
+  description = "SKU name for the PostgreSQL Flexible Server (e.g. B_Standard_B1ms)."
+  type        = string
+  default     = "B_Standard_B1ms"
 }
 
 variable "postgresql_storage_mb" {
-  type    = number
-  default = 32768
+  description = "Storage allocated to the PostgreSQL server in MiB. Minimum 32768 (32 GiB)."
+  type        = number
+  default     = 32768
 }
 
 variable "postgresql_storage_tier" {
-  type    = string
-  default = "P4"
+  description = "Performance tier for PostgreSQL storage (e.g. P4)."
+  type        = string
+  default     = "P4"
 }
 
 variable "mssql_sku" {
-  type    = string
-  default = "S1"
+  description = "SKU name for the Azure SQL Database (e.g. Basic, S1)."
+  type        = string
+  default     = "S1"
 }
 
 variable "mssql_max_size_gb" {
-  type    = number
-  default = 10
+  description = "Maximum data size in GiB for the Azure SQL Database."
+  type        = number
+  default     = 10
+}
+
+# ── Storage ───────────────────────────────────────────────────────────────────
+
+variable "app_storage_containers" {
+  description = "List of blob container names to create in the application storage account."
+  type        = list(string)
+  default     = ["uploads", "backups"]
+}
+
+# ── Cost management ───────────────────────────────────────────────────────────
+
+variable "monthly_budget_usd" {
+  description = "Monthly spend limit in USD for the environment resource group budget alert."
+  type        = number
+  default     = 22
+}
+
+variable "budget_start_date" {
+  description = "ISO 8601 start date for the budget period (e.g. 2026-04-01T00:00:00Z)."
+  type        = string
 }

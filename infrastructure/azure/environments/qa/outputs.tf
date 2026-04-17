@@ -1,7 +1,7 @@
 output "vnet_id" { value = module.vnet.id }
 output "aks_name" { value = module.aks.name }
-output "acr_name" { value = data.azurerm_container_registry.shared.name }
-output "acr_login_server" { value = data.azurerm_container_registry.shared.login_server }
+output "acr_name" { value = local.acr_ready ? data.azurerm_container_registry.shared[0].name : "" }
+output "acr_login_server" { value = local.acr_ready ? data.azurerm_container_registry.shared[0].login_server : "" }
 output "key_vault_name" { value = module.keyvault.name }
 output "key_vault_uri" { value = module.keyvault.vault_uri }
 output "lb_public_ip" { value = module.load_balancer.public_ip_address }
@@ -37,4 +37,14 @@ output "db_admin_username" {
     ) : (
     length(module.sql_database) > 0 ? module.sql_database[0].admin_username : null
   )
+}
+
+output "environment" {
+  description = "Deployed environment name"
+  value       = var.environment
+}
+
+output "location_short" {
+  description = "Short location code used in resource name suffixes"
+  value       = var.location_short
 }

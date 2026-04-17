@@ -13,34 +13,6 @@
 # Resource group: my-Rental-App-QA (destroy-safe)
 # =============================================================================
 
-locals {
-  env            = var.environment
-  location_short = "eus2"
-
-  env_config = {
-    dev = {
-      vnet_cidr    = "10.0.0.0/16"
-      subnet_cidrs = { aks = "10.0.1.0/24", ingress = "10.0.2.0/24", data = "10.0.3.0/24" }
-      aks_nodes    = 1
-      aks_vm_size  = "Standard_D2s_v3"
-    }
-    qa = {
-      vnet_cidr    = "10.1.0.0/16"
-      subnet_cidrs = { aks = "10.1.1.0/24", ingress = "10.1.2.0/24", data = "10.1.3.0/24" }
-      aks_nodes    = 1
-      aks_vm_size  = "Standard_B2s"
-    }
-  }
-
-  cfg = local.env_config[local.env]
-
-  tags = {
-    env     = local.env
-    project = "rentalAppLedger"
-    owner   = "techwizard-platformlab"
-  }
-}
-
 # ── Env resource group ────────────────────────────────────────────────────────
 resource "azurerm_resource_group" "env" {
   name     = var.env_resource_group_name
@@ -49,7 +21,9 @@ resource "azurerm_resource_group" "env" {
 }
 
 # ── Shared ACR reference ──────────────────────────────────────────────────────
+# Skipped when acr_name is empty (shared layer not yet applied).
 data "azurerm_container_registry" "shared" {
+  count               = local.acr_ready ? 1 : 0
   name                = var.acr_name
   resource_group_name = var.shared_resource_group_name
 }
@@ -57,9 +31,9 @@ data "azurerm_container_registry" "shared" {
 # ── Key Vault — env-specific secrets ─────────────────────────────────────────
 module "keyvault" {
   source              = "../../modules/keyvault"
-  environment         = local.env
+  environment         = var.environment
   location            = var.location
-  location_short      = local.location_short
+  location_short      = var.location_short
   resource_group_name = azurerm_resource_group.env.name
   tags                = local.tags
 }
@@ -74,8 +48,9 @@ resource "azurerm_role_assignment" "github_kv_secrets_officer" {
 
 # Store shared ACR login server URL in env Key Vault for app consumption
 resource "azurerm_key_vault_secret" "acr_login_server" {
+  count        = local.acr_ready ? 1 : 0
   name         = "acr-login-server"
-  value        = data.azurerm_container_registry.shared.login_server
+  value        = data.azurerm_container_registry.shared[0].login_server
   key_vault_id = module.keyvault.id
   depends_on   = [azurerm_role_assignment.github_kv_secrets_officer]
 }
@@ -83,20 +58,20 @@ resource "azurerm_key_vault_secret" "acr_login_server" {
 # ── Networking ────────────────────────────────────────────────────────────────
 module "vnet" {
   source              = "../../modules/vnet"
-  environment         = local.env
+  environment         = var.environment
   location            = var.location
-  location_short      = local.location_short
+  location_short      = var.location_short
   resource_group_name = azurerm_resource_group.env.name
-  address_space       = [local.cfg.vnet_cidr]
-  subnets             = local.cfg.subnet_cidrs
+  address_space       = [var.vnet_cidr]
+  subnets             = var.subnet_cidrs
   tags                = local.tags
 }
 
 module "security_group" {
   source              = "../../modules/security_group"
-  environment         = local.env
+  environment         = var.environment
   location            = var.location
-  location_short      = local.location_short
+  location_short      = var.location_short
   resource_group_name = azurerm_resource_group.env.name
   subnet_ids          = module.vnet.subnet_ids
   tags                = local.tags
@@ -105,47 +80,50 @@ module "security_group" {
 # ── Compute ───────────────────────────────────────────────────────────────────
 module "aks" {
   source              = "../../modules/aks"
-  environment         = local.env
+  environment         = var.environment
   location            = var.location
-  location_short      = local.location_short
+  location_short      = var.location_short
   resource_group_name = azurerm_resource_group.env.name
-  kubernetes_version  = null
-  node_count          = local.cfg.aks_nodes
-  vm_size             = local.cfg.aks_vm_size
-  os_disk_size_gb     = 30
+  kubernetes_version  = var.kubernetes_version
+  node_count          = var.aks_node_count
+  vm_size             = var.aks_vm_size
+  os_disk_size_gb     = var.aks_os_disk_gb
   subnet_id           = module.vnet.subnet_ids["aks"]
   tags                = local.tags
 }
 
 # AcrPull — AKS pods can pull images from the shared registry
 resource "azurerm_role_assignment" "aks_acr_pull" {
-  scope                = data.azurerm_container_registry.shared.id
+  count                = local.acr_ready ? 1 : 0
+  scope                = data.azurerm_container_registry.shared[0].id
   role_definition_name = "AcrPull"
   principal_id         = module.aks.kubelet_identity_object_id
 }
 
 module "load_balancer" {
   source              = "../../modules/load_balancer"
-  environment         = local.env
+  environment         = var.environment
   location            = var.location
-  location_short      = local.location_short
+  location_short      = var.location_short
   resource_group_name = azurerm_resource_group.env.name
   tags                = local.tags
 }
 
 # ── Data storage ──────────────────────────────────────────────────────────────
+# Exactly one database module is deployed, chosen by var.db_engine (terraform.tfvars).
+
 module "postgresql" {
   count  = var.db_engine == "postgresql" ? 1 : 0
   source = "../../modules/postgresql"
 
-  environment         = local.env
+  environment         = var.environment
   location            = var.location
-  location_short      = local.location_short
+  location_short      = var.location_short
   resource_group_name = azurerm_resource_group.env.name
   sku_name            = var.postgresql_sku
   storage_mb          = var.postgresql_storage_mb
   storage_tier        = var.postgresql_storage_tier
-  aks_subnet_cidr     = local.cfg.subnet_cidrs["aks"]
+  aks_subnet_cidr     = var.subnet_cidrs["aks"]
   key_vault_id        = module.keyvault.id
   tags                = local.tags
 }
@@ -154,34 +132,34 @@ module "sql_database" {
   count  = var.db_engine == "mssql" ? 1 : 0
   source = "../../modules/sql_database"
 
-  environment         = local.env
+  environment         = var.environment
   location            = var.location
-  location_short      = local.location_short
+  location_short      = var.location_short
   resource_group_name = azurerm_resource_group.env.name
   db_sku              = var.mssql_sku
   max_size_gb         = var.mssql_max_size_gb
-  aks_subnet_cidr     = local.cfg.subnet_cidrs["aks"]
+  aks_subnet_cidr     = var.subnet_cidrs["aks"]
   key_vault_name      = module.keyvault.name
   tags                = local.tags
 }
 
 module "storage_account" {
   source              = "../../modules/storage_account"
-  environment         = local.env
+  environment         = var.environment
   location            = var.location
-  location_short      = local.location_short
+  location_short      = var.location_short
   resource_group_name = azurerm_resource_group.env.name
   suffix              = "app"
-  containers          = ["uploads", "backups"]
+  containers          = var.app_storage_containers
   tags                = local.tags
 }
 
 # ── Cost management ───────────────────────────────────────────────────────────
 module "budget" {
   source             = "../../modules/budget"
-  environment        = local.env
+  environment        = var.environment
   resource_group_id  = azurerm_resource_group.env.id
-  monthly_budget_usd = 22
-  budget_start_date  = "2026-04-01T00:00:00Z"
+  monthly_budget_usd = var.monthly_budget_usd
+  budget_start_date  = var.budget_start_date
   alert_emails       = var.alert_emails
 }

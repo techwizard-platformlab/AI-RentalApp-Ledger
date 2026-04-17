@@ -78,53 +78,44 @@ resource "azurerm_postgresql_flexible_server_firewall_rule" "allow_aks" {
 }
 
 # ── Key Vault secrets ──────────────────────────────────────────────────────────
-# Skipped when key_vault_id is null (shared layer not yet applied).
-# On the next apply after shared Terraform runs, these are created automatically.
 
 resource "azurerm_key_vault_secret" "db_host" {
-  count        = var.key_vault_id != null ? 1 : 0
   name         = "db-host"
   value        = azurerm_postgresql_flexible_server.this.fqdn
   key_vault_id = var.key_vault_id
 }
 
 resource "azurerm_key_vault_secret" "db_name" {
-  count        = var.key_vault_id != null ? 1 : 0
   name         = "db-name"
   value        = azurerm_postgresql_flexible_server_database.rental.name
   key_vault_id = var.key_vault_id
 }
 
 resource "azurerm_key_vault_secret" "db_user" {
-  count        = var.key_vault_id != null ? 1 : 0
   name         = "db-user"
   value        = var.db_admin_username
   key_vault_id = var.key_vault_id
 }
 
 resource "azurerm_key_vault_secret" "db_password" {
-  count        = var.key_vault_id != null ? 1 : 0
   name         = "db-password"
   value        = random_password.db_admin.result
   key_vault_id = var.key_vault_id
 }
 
 resource "azurerm_key_vault_secret" "db_port" {
-  count        = var.key_vault_id != null ? 1 : 0
   name         = "db-port"
   value        = "5432"
   key_vault_id = var.key_vault_id
 }
 
 resource "azurerm_key_vault_secret" "db_engine" {
-  count        = var.key_vault_id != null ? 1 : 0
   name         = "db-engine"
   value        = "django.db.backends.postgresql"
   key_vault_id = var.key_vault_id
 }
 
 resource "azurerm_key_vault_secret" "django_secret_key" {
-  count        = var.key_vault_id != null ? 1 : 0
   name         = "django-secret-key"
   value        = random_password.django_secret_key.result
   key_vault_id = var.key_vault_id
