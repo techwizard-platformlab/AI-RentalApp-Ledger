@@ -318,7 +318,7 @@ jobs:
       - name: Job summary
         if: always()
         run: |
-          echo "### Azure Shared — Plan (ACR + Key Vault)" >> $GITHUB_STEP_SUMMARY
+          echo "### Azure Shared — Plan (ACR)" >> $GITHUB_STEP_SUMMARY
           echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| RG | ${{ secrets.TF_SHARED_RG }} (my-Rental-App) |" >> $GITHUB_STEP_SUMMARY
@@ -387,21 +387,18 @@ jobs:
         id: apply
         run: terraform apply -no-color tfplan.binary
 
-      - name: Capture outputs (ACR + Key Vault names)
+      - name: Capture outputs (ACR name)
         id: tf_outputs
         if: steps.apply.outcome == 'success'
         run: |
           ACR_NAME=$(terraform output -raw acr_name 2>/dev/null || echo "")
-          KV_NAME=$(terraform output -raw key_vault_name 2>/dev/null || echo "")
-          echo "acr_name=$ACR_NAME"         >> $GITHUB_OUTPUT
-          echo "key_vault_name=$KV_NAME"    >> $GITHUB_OUTPUT
+          echo "acr_name=$ACR_NAME" >> $GITHUB_OUTPUT
           echo "### Shared outputs" >> $GITHUB_STEP_SUMMARY
           echo "| Resource | Name |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|------|" >> $GITHUB_STEP_SUMMARY
           echo "| ACR | \`$ACR_NAME\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Key Vault | \`$KV_NAME\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> Update GitHub Secrets **ACR_NAME** and **KEY_VAULT_NAME** with the values above." >> $GITHUB_STEP_SUMMARY
+          echo "> Update GitHub Secret **ACR_NAME** with the value above." >> $GITHUB_STEP_SUMMARY
 
       - name: Job summary
         if: always()
@@ -440,11 +437,11 @@ jobs:
       ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_subscription_id:            ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_env_resource_group_name:    ${{ needs.setup.outputs.env_rg }}
-      TF_VAR_shared_resource_group_name: ${{ secrets.TF_SHARED_RG }}
-      TF_VAR_acr_name:                   ${{ secrets.ACR_NAME }}
-      TF_VAR_key_vault_name:             ${{ secrets.KEY_VAULT_NAME }}
+      TF_VAR_subscription_id:              ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_env_resource_group_name:      ${{ needs.setup.outputs.env_rg }}
+      TF_VAR_shared_resource_group_name:   ${{ secrets.TF_SHARED_RG }}
+      TF_VAR_acr_name:                     ${{ secrets.ACR_NAME }}
+      TF_VAR_github_actions_principal_id:  ${{ secrets.TF_GITHUB_ACTIONS_PRINCIPAL_ID }}
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -705,11 +702,11 @@ jobs:
       ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_subscription_id:            ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_env_resource_group_name:    ${{ needs.setup.outputs.env_rg }}
-      TF_VAR_shared_resource_group_name: ${{ secrets.TF_SHARED_RG }}
-      TF_VAR_acr_name:                   ${{ secrets.ACR_NAME }}
-      TF_VAR_key_vault_name:             ${{ secrets.KEY_VAULT_NAME }}
+      TF_VAR_subscription_id:              ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_env_resource_group_name:      ${{ needs.setup.outputs.env_rg }}
+      TF_VAR_shared_resource_group_name:   ${{ secrets.TF_SHARED_RG }}
+      TF_VAR_acr_name:                     ${{ secrets.ACR_NAME }}
+      TF_VAR_github_actions_principal_id:  ${{ secrets.TF_GITHUB_ACTIONS_PRINCIPAL_ID }}
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
