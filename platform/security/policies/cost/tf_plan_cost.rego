@@ -17,6 +17,8 @@ import future.keywords.in
 # =============================================================================
 
 compute_hours_per_month := 88
+compute_hours_per_week  := 20  # 4 hrs/day × 5 working days
+weeks_per_month         := 4.33
 
 # ── VM / node hourly costs (USD, East US) ────────────────────────────────────
 vm_hourly_cost := {
@@ -59,10 +61,17 @@ acr_monthly_cost := {
   "premium":  50.13,
 }
 
-# ── Thresholds matching cost_guard.rego (USD/month) ──────────────────────────
+# ── Monthly thresholds (USD) ─────────────────────────────────────────────────
 deny_threshold         := 22
 warn_threshold         := 15
 per_resource_warn_usd  := 8
+
+# ── Weekly thresholds (USD) — deploy-destroy pattern, ~20 hrs/week ───────────
+deny_threshold_weekly  := 6
+warn_threshold_weekly  := 4
+
+# ── Currency conversion ───────────────────────────────────────────────────────
+usd_to_inr := 84.0
 
 # =============================================================================
 # Active resource changes — only "create" and "update" actions count
@@ -180,9 +189,10 @@ total_estimated_cost := sum([entry.cost | entry := cost_breakdown[_]])
 deny contains msg if {
   total_estimated_cost > deny_threshold
   top_entries := top3_by_cost
+  inr := total_estimated_cost * usd_to_inr
   msg := sprintf(
-    "[TF PLAN COST] Estimated monthly cost $%.2f exceeds $%d limit (deploy-destroy, 88 hrs/month).\nTop resources:\n%s\nReduce node sizes, switch to postgresql B_Standard_B1ms, or review replica counts.",
-    [total_estimated_cost, deny_threshold, top_entries],
+    "[TF PLAN COST] Estimated monthly cost $%.2f USD (₹%.0f INR) exceeds $%d USD limit (deploy-destroy, 88 hrs/month).\nTop resources:\n%s\nReduce node sizes, switch to postgresql B_Standard_B1ms, or review replica counts.",
+    [total_estimated_cost, inr, deny_threshold, top_entries],
   )
 }
 
@@ -192,9 +202,10 @@ deny contains msg if {
 warn contains msg if {
   total_estimated_cost >= warn_threshold
   total_estimated_cost <= deny_threshold
+  inr := total_estimated_cost * usd_to_inr
   msg := sprintf(
-    "[TF PLAN COST] Estimated monthly cost $%.2f is in warning range ($%d–$%d). Review before applying.",
-    [total_estimated_cost, warn_threshold, deny_threshold],
+    "[TF PLAN COST] Estimated monthly cost $%.2f USD (₹%.0f INR) is in warning range ($%d–$%d USD). Review before applying.",
+    [total_estimated_cost, inr, warn_threshold, deny_threshold],
   )
 }
 
@@ -204,9 +215,10 @@ warn contains msg if {
 warn contains msg if {
   entry := cost_breakdown[_]
   entry.cost > per_resource_warn_usd
+  inr := entry.cost * usd_to_inr
   msg := sprintf(
-    "[TF PLAN COST] '%s' (%s) estimated at $%.2f/month — exceeds $%d single-resource warning.",
-    [entry.address, entry.type, entry.cost, per_resource_warn_usd],
+    "[TF PLAN COST] '%s' (%s) estimated at $%.2f USD (₹%.0f INR)/month — exceeds $%d USD single-resource warning.",
+    [entry.address, entry.type, entry.cost, inr, per_resource_warn_usd],
   )
 }
 
@@ -222,7 +234,8 @@ top3_by_cost := result if {
   ]
   lines := [line |
     e := top_entries[_]
-    line := sprintf("  - %s: $%.2f/month", [e.address, e.cost])
+    inr := e.cost * usd_to_inr
+    line := sprintf("  - %s: $%.2f USD (₹%.0f INR)/month", [e.address, e.cost, inr])
   ]
   result := concat("\n", lines)
 }
@@ -231,4 +244,137 @@ top3_by_cost := result if {
 reverse_sort(arr) := result if {
   sorted := sort(arr)
   result := array.reverse(sorted)
+}
+
+# =============================================================================
+# Weekly cost estimation (deploy-destroy pattern — 20 hrs/week)
+#   Compute     → hourly_rate × compute_hours_per_week
+#   Persistent  → monthly_cost / weeks_per_month (prorated)
+# =============================================================================
+
+resource_cost_weekly(rc) := cost if {
+  rc.type == "azurerm_kubernetes_cluster"
+  pool   := rc.change.after.default_node_pool[0]
+  vm_key := lower(pool.vm_size)
+  hourly := vm_hourly_cost[vm_key]
+  count  := object.get(pool, "node_count", 1)
+  cost   := hourly * count * compute_hours_per_week
+}
+
+resource_cost_weekly(rc) := cost if {
+  rc.type == "azurerm_kubernetes_cluster_node_pool"
+  vm_key := lower(rc.change.after.vm_size)
+  hourly := vm_hourly_cost[vm_key]
+  count  := object.get(rc.change.after, "max_count",
+              object.get(rc.change.after, "node_count", 1))
+  cost   := hourly * count * compute_hours_per_week
+}
+
+resource_cost_weekly(rc) := cost if {
+  rc.type == "azurerm_postgresql_flexible_server"
+  sku_key := lower(rc.change.after.sku_name)
+  hourly  := postgresql_hourly_cost[sku_key]
+  cost    := hourly * compute_hours_per_week
+}
+
+resource_cost_weekly(rc) := cost if {
+  rc.type == "azurerm_mssql_database"
+  sku_key := lower(rc.change.after.sku_name)
+  cost    := sql_monthly_cost[sku_key] / weeks_per_month
+}
+
+resource_cost_weekly(rc) := cost if {
+  rc.type == "azurerm_container_registry"
+  sku_key := lower(rc.change.after.sku)
+  cost    := acr_monthly_cost[sku_key] / weeks_per_month
+}
+
+resource_cost_weekly(rc) := cost if {
+  rc.type == "azurerm_key_vault"
+  cost := 1.0 / weeks_per_month
+}
+
+resource_cost_weekly(rc) := cost if {
+  rc.type == "azurerm_storage_account"
+  cost := 1.5 / weeks_per_month
+}
+
+resource_cost_weekly(rc) := cost if {
+  rc.type == "azurerm_public_ip"
+  cost := 0.004 * compute_hours_per_week
+}
+
+resource_cost_weekly(rc) := cost if {
+  rc.type == "azurerm_lb"
+  cost := 0.025 * compute_hours_per_week
+}
+
+resource_cost_weekly(rc) := 0 if {
+  not rc.type in {
+    "azurerm_kubernetes_cluster",
+    "azurerm_kubernetes_cluster_node_pool",
+    "azurerm_postgresql_flexible_server",
+    "azurerm_mssql_database",
+    "azurerm_container_registry",
+    "azurerm_key_vault",
+    "azurerm_storage_account",
+    "azurerm_public_ip",
+    "azurerm_lb",
+  }
+}
+
+cost_breakdown_weekly := [entry |
+  rc   := active_changes[_]
+  cost := resource_cost_weekly(rc)
+  entry := {
+    "address": rc.address,
+    "type":    rc.type,
+    "cost":    cost,
+  }
+]
+
+total_estimated_cost_weekly := sum([entry.cost | entry := cost_breakdown_weekly[_]])
+
+# =============================================================================
+# RULE: Deny if weekly cost exceeds weekly budget
+# =============================================================================
+deny contains msg if {
+  total_estimated_cost_weekly > deny_threshold_weekly
+  top_entries := top3_by_cost_weekly
+  inr         := total_estimated_cost_weekly * usd_to_inr
+  msg := sprintf(
+    "[TF PLAN COST - WEEKLY] Estimated weekly cost $%.2f USD (₹%.0f INR) exceeds $%d USD/week limit (20 hrs/week).\nTop resources:\n%s\nReduce node sizes or destroy compute when idle.",
+    [total_estimated_cost_weekly, inr, deny_threshold_weekly, top_entries],
+  )
+}
+
+# =============================================================================
+# RULE: Warn if weekly cost is in amber zone
+# =============================================================================
+warn contains msg if {
+  total_estimated_cost_weekly >= warn_threshold_weekly
+  total_estimated_cost_weekly <= deny_threshold_weekly
+  inr := total_estimated_cost_weekly * usd_to_inr
+  msg := sprintf(
+    "[TF PLAN COST - WEEKLY] Estimated weekly cost $%.2f USD (₹%.0f INR) is in warning range ($%d–$%d USD/week).",
+    [total_estimated_cost_weekly, inr, warn_threshold_weekly, deny_threshold_weekly],
+  )
+}
+
+# =============================================================================
+# Helper: top 3 weekly resources as formatted string
+# =============================================================================
+top3_by_cost_weekly := result if {
+  sorted_desc := reverse_sort([e.cost | e := cost_breakdown_weekly[_]])
+  top_costs   := array.slice(sorted_desc, 0, 3)
+  top_entries := [entry |
+    entry := cost_breakdown_weekly[_]
+    entry.cost in top_costs
+  ]
+  lines := [line |
+    e   := top_entries[_]
+    inr := e.cost * usd_to_inr
+    line := sprintf("  - %s: $%.2f USD (₹%.0f INR)/week", [e.address, e.cost, inr])
+  ]
+  result := concat("\n", lines)
 }
