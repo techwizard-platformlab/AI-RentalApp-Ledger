@@ -185,6 +185,17 @@ jobs:
               });
             }
 
+      # ── Discord ──────────────────────────────────────────────────────────────
+      - name: Notify Discord
+        if: always() && env.DISCORD_WEBHOOK != ''
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        uses: sarisia/actions-status-discord@eb045afee445dc055c18d3d90bd0f244fd062708  # v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: ${{ steps.opa_cost.outputs.exit_code == '0' && 'success' || 'failure' }}
+          title: "Cost Check (${{ matrix.cloud }}) — OPA ${{ steps.opa_cost.outputs.exit_code == '0' && 'Within Budget' || 'Over Budget' }}"
+
       # ── Gate ─────────────────────────────────────────────────────────────────
       - name: Fail if cost denied
         if: steps.opa_cost.outputs.exit_code != '0'

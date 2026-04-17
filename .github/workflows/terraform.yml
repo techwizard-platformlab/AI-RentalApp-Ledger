@@ -577,6 +577,16 @@ jobs:
           echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Actor | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
 
+      - name: Notify Discord
+        if: always() && env.DISCORD_WEBHOOK != ''
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        uses: sarisia/actions-status-discord@eb045afee445dc055c18d3d90bd0f244fd062708  # v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: ${{ job.status }}
+          title: "Azure ${{ needs.setup.outputs.env }} — Plan (OPA: ${{ steps.opa_cost.outputs.exit_code == '0' && 'OK' || 'WARN' }})"
+
   # ===========================================================================
   # AZURE — Approve (destruction gate)
   #
@@ -804,6 +814,50 @@ jobs:
       - name: Convert plan to JSON
         run: terraform show -json tfplan.binary > tfplan.json
 
+      # ── OPA cost check (terraform plan JSON — no external API needed) ────────
+      - name: Install conftest
+        run: |
+          curl -sL https://github.com/open-policy-agent/conftest/releases/download/v0.50.0/conftest_0.50.0_Linux_x86_64.tar.gz | tar xz
+          sudo mv conftest /usr/local/bin/
+
+      - name: OPA cost check
+        id: opa_cost
+        run: |
+          set +e
+
+          echo "==== OPA Cost Check Terminal Output ===="
+          conftest test tfplan.json \
+            --namespace cost_tfplan \
+            --policy ../../../../platform/security/policies/cost/tf_plan_cost.rego
+
+          conftest test tfplan.json \
+            --namespace cost_tfplan \
+            --policy ../../../../platform/security/policies/cost/tf_plan_cost.rego \
+            --output json > opa-cost-result.json 2>&1
+          OPA_EXIT=$?
+          echo "exit_code=${OPA_EXIT}" >> "$GITHUB_OUTPUT"
+
+          echo "### OPA Cost Check" >> "$GITHUB_STEP_SUMMARY"
+          echo "Budget: \$22/month | Pattern: deploy-destroy (88 hrs/month)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          python3 - >> "$GITHUB_STEP_SUMMARY" <<'PYEOF'
+          import json
+          try:
+              data = json.load(open("opa-cost-result.json"))
+          except Exception:
+              print("_No result data_"); exit(0)
+          failures = [f for r in data for f in r.get("failures", [])]
+          warnings = [w for r in data for w in r.get("warnings", [])]
+          if failures:
+              print("**DENY**"); [print(f"> {f['msg']}") for f in failures]
+          if warnings:
+              print("**WARN**"); [print(f"> {w['msg']}") for w in warnings]
+          if not failures and not warnings:
+              print("Cost within budget.")
+          PYEOF
+          set -e
+
       - name: Detect destructive changes
         id: check_destroys
         run: |
@@ -849,6 +903,16 @@ jobs:
           echo "| Destroys | ${{ steps.check_destroys.outputs.destroy_count || '0' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Actor | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify Discord
+        if: always() && env.DISCORD_WEBHOOK != ''
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        uses: sarisia/actions-status-discord@eb045afee445dc055c18d3d90bd0f244fd062708  # v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: ${{ job.status }}
+          title: "GCP ${{ needs.setup.outputs.env }} — Plan (OPA: ${{ steps.opa_cost.outputs.exit_code == '0' && 'OK' || 'WARN' }})"
 
   # ===========================================================================
   # GCP — Approve (destruction gate)

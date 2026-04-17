@@ -70,6 +70,16 @@ jobs:
             echo "- \`$f\`" >> $GITHUB_STEP_SUMMARY
           done
 
+      - name: Notify Discord
+        if: always() && env.DISCORD_WEBHOOK != ''
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        uses: sarisia/actions-status-discord@eb045afee445dc055c18d3d90bd0f244fd062708  # v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: ${{ job.status }}
+          title: "Platform Lint — OPA Rego Lint"
+
   # ===========================================================================
   # Trivy filesystem scan
   # Scans repo files for known CVEs in dependencies and leaked secrets.
@@ -99,3 +109,13 @@ jobs:
         if: always()
         with:
           sarif_file: trivy-results.sarif
+
+      - name: Notify Discord
+        if: always() && env.DISCORD_WEBHOOK != ''
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        uses: sarisia/actions-status-discord@eb045afee445dc055c18d3d90bd0f244fd062708  # v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: ${{ job.status }}
+          title: "Platform Lint — Trivy Security Scan"

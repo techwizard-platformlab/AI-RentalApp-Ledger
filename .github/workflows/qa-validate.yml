@@ -135,26 +135,17 @@ jobs:
           path: qa/reports/report-${{ matrix.cloud }}.html
           retention-days: 14
 
-      - name: Notify Discord — pass
-        if: env.BDD_EXIT_CODE == '' || env.BDD_EXIT_CODE == '0'
-        uses: sarisia/actions-status-discord@eb045afee445dc055c18d3d90bd0f244fd062708  # v1
-        with:
-          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          status: success
-          title: "✅ BDD Tests PASSED — ${{ matrix.cloud }} ${{ inputs.environment || 'dev' }}"
-          description: "All smoke tests passed after deployment."
-          color: 0x00ff00
-
-      - name: Notify Discord — fail
-        if: env.BDD_EXIT_CODE != '' && env.BDD_EXIT_CODE != '0'
-        uses: sarisia/actions-status-discord@eb045afee445dc055c18d3d90bd0f244fd062708  # v1
-        with:
-          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          status: failure
-          title: "❌ BDD Tests FAILED — ${{ matrix.cloud }} ${{ inputs.environment || 'dev' }}"
-          description: "One or more smoke tests failed. See artifact for report."
-          color: 0xff0000
-
       - name: Fail job if BDD failed
         if: env.BDD_EXIT_CODE != '' && env.BDD_EXIT_CODE != '0'
         run: exit 1
+
+      - name: Notify Discord
+        if: always() && env.DISCORD_WEBHOOK != ''
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        uses: sarisia/actions-status-discord@eb045afee445dc055c18d3d90bd0f244fd062708  # v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          status: ${{ job.status }}
+          title: "BDD Tests (${{ matrix.cloud }} ${{ inputs.environment || 'dev' }}) — ${{ job.status == 'success' && 'PASSED' || 'FAILED' }}"
+          description: ${{ job.status == 'success' && 'All smoke tests passed.' || 'One or more smoke tests failed. See artifact for report.' }}
