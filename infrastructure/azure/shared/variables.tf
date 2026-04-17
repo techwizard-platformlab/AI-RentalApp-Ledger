@@ -54,10 +54,11 @@ variable "github_actions_principal_id" {
     Object ID (OID) of the GitHub Actions OIDC service principal / managed identity.
     Used to grant Key Vault Secrets Officer so CI/CD workflows can write secrets.
     Find it: az ad sp show --id <AZURE_CLIENT_ID> --query id -o tsv
+    Supply via: GitHub Secret TF_VAR_github_actions_principal_id
   EOT
-  type        = string
-  # Default from current infrastructure — update if the service principal changes.
-  default     = "203e0ec4-f4e5-4397-834a-0490cc424549"
+  type      = string
+  sensitive = true
+  # No default — must be supplied via TF_VAR_github_actions_principal_id GitHub Secret
 }
 
 variable "aks_name" {

@@ -12,28 +12,39 @@ name: "Infra"
 #   apply   → uses saved plan binary (exact approved plan)
 #   destroy → compute-only (AKS/GKE + VNet, keeps ACR/SQL/KV) or full
 #
-# Safety
-#   Manual destroy/apply-with-deletions → pauses at "terraform-destructive-approval"
-#   Scheduled runs                      → skip approval gate (no human available)
-#   Non-dev apply/destroy               → confirm field must match env name
+# Approval gates  (ALL apply and destroy require human approval)
+#   Manual apply/destroy → pauses at "terraform-destructive-approval" environment
+#   Scheduled runs       → skip approval gate (no human available — intentional)
+#   Non-dev operations   → confirm field must match env name before gate fires
 #
 # Auth
 #   Azure → OIDC / federated credential (no client secret)
 #   GCP   → OIDC (workload identity)
 #
-# Setup
+# Public-repo security
+#   PR trigger uses pull_request_target restricted to the base branch (main).
+#   Fork PRs are allowed to trigger a plan-only run but CANNOT access secrets
+#   because the workflow checks github.event.pull_request.head.repo.fork and
+#   exits early if true. Apply and destroy are workflow_dispatch-only.
+#
+# Setup (one-time)
 #   repo Settings → Environments → create "terraform-destructive-approval"
 #   → add yourself as required reviewer
+#   → Add GitHub Secret: TF_VAR_github_actions_principal_id (Azure SP Object ID)
 # =============================================================================
 
 on:
-  # Auto triggers — enable after workflow is stable
-  # pull_request:
-  #   branches: [main]
-  #   paths:
-  #     - "infrastructure/**"
-  #     - "platform/security/policies/**"
-  #     - ".github/workflows/terraform.yml"
+  # Pull-request plan preview — uses pull_request_target so the workflow runs
+  # in the context of the BASE branch (main), not the PR branch.
+  # This means secrets are available for internal contributors but
+  # the fork-protection check below ensures forks still cannot access them.
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+    paths:
+      - "infrastructure/**"
+      - "platform/security/policies/**"
+      - ".github/workflows/terraform.yml"
 
   # push:
   #   branches: [main, "feature/**", "fix/**", "hotfix/**"]
@@ -113,6 +124,17 @@ jobs:
       scheduled: ${{ steps.resolve.outputs.scheduled }}
 
     steps:
+      # ── Fork protection ───────────────────────────────────────────────────────
+      # For pull_request_target from a fork: exit immediately so secrets are
+      # never exposed. Internal branches (same repo) proceed normally.
+      - name: Block fork PRs from accessing secrets
+        if: |
+          github.event_name == 'pull_request_target' &&
+          github.event.pull_request.head.repo.fork == true
+        run: |
+          echo "::error::Fork PRs cannot trigger infrastructure plans. Open a branch in this repo."
+          exit 1
+
       - name: Resolve trigger inputs
         id: resolve
         run: |
@@ -136,7 +158,7 @@ jobs:
             exit 0
           fi
 
-          if [ "$TRIGGER" = "pull_request" ]; then
+          if [ "$TRIGGER" = "pull_request_target" ]; then
             echo "env=dev"                   >> $GITHUB_OUTPUT
             echo "env_rg=my-Rental-App-Dev"  >> $GITHUB_OUTPUT
             echo "action=plan"               >> $GITHUB_OUTPUT
@@ -232,8 +254,9 @@ jobs:
       ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_subscription_id:            ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_shared_resource_group_name: ${{ secrets.TF_SHARED_RG }}
+      TF_VAR_subscription_id:              ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_shared_resource_group_name:   ${{ secrets.TF_SHARED_RG }}
+      TF_VAR_github_actions_principal_id:  ${{ secrets.TF_GITHUB_ACTIONS_PRINCIPAL_ID }}
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -327,8 +350,9 @@ jobs:
       ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_subscription_id:            ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_shared_resource_group_name: ${{ secrets.TF_SHARED_RG }}
+      TF_VAR_subscription_id:              ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_shared_resource_group_name:   ${{ secrets.TF_SHARED_RG }}
+      TF_VAR_github_actions_principal_id:  ${{ secrets.TF_GITHUB_ACTIONS_PRINCIPAL_ID }}
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -588,15 +612,18 @@ jobs:
           title: "Azure ${{ needs.setup.outputs.env }} — Plan (OPA: ${{ steps.opa_cost.outputs.exit_code == '0' && 'OK' || 'WARN' }})"
 
   # ===========================================================================
-  # AZURE — Approve (destruction gate)
+  # AZURE — Approve (mandatory gate for ALL apply and destroy)
   #
   # Fires when:
+  #   • manual apply (with OR without deletions in plan)
   #   • manual destroy (any scope, any env)
-  #   • manual apply with resource deletions in plan
   #
   # Skipped for:
-  #   • scheduled runs (no one to approve)
+  #   • scheduled runs (no human available — intentional auto-run)
   #   • plan-only runs
+  #
+  # Uses the "terraform-destructive-approval" environment for every apply/destroy
+  # so a required reviewer MUST approve before terraform executes.
   # ===========================================================================
   azure_approve:
     name: "⚠️ Approve — Azure ${{ needs.setup.outputs.env }} ${{ needs.setup.outputs.action }} (${{ needs.setup.outputs.scope }})"
@@ -607,13 +634,13 @@ jobs:
       needs.setup.outputs.run_azure == 'true' &&
       (needs.azure_plan.result == 'success' || needs.azure_plan.result == 'skipped') &&
       (needs.setup.outputs.action == 'apply' || needs.setup.outputs.action == 'destroy')
-    environment: ${{ (needs.azure_plan.outputs.has_destroys == 'true' || needs.setup.outputs.action == 'destroy') && 'terraform-destructive-approval' || 'shared' }}
+    environment: terraform-destructive-approval
 
     steps:
-      - name: Summarise what will be destroyed
+      - name: Summarise what will happen
         run: |
           echo "============================================================"
-          echo "  ⚠️  DESTRUCTIVE OPERATION — Azure ${{ needs.setup.outputs.env }}"
+          echo "  ⚠️  APPROVAL REQUIRED — Azure ${{ needs.setup.outputs.env }}"
           echo "============================================================"
           echo "  Action : ${{ needs.setup.outputs.action }}"
           echo "  Scope  : ${{ needs.setup.outputs.scope }}"
@@ -629,9 +656,16 @@ jobs:
               echo "  WARNING:    SQL data, container images, and secrets will be DELETED."
             fi
           else
-            echo "  Destroys in plan: ${{ needs.azure_plan.outputs.destroy_count }} resource(s)"
-            echo ""
-            echo "${{ needs.azure_plan.outputs.destroy_list }}"
+            DESTROY_COUNT="${{ needs.azure_plan.outputs.destroy_count }}"
+            if [ -z "$DESTROY_COUNT" ] || [ "$DESTROY_COUNT" = "0" ]; then
+              echo ""
+              echo "  This apply has NO resource deletions."
+              echo "  Approval is still required for all apply operations."
+            else
+              echo "  Destroys in plan: $DESTROY_COUNT resource(s)"
+              echo ""
+              echo "${{ needs.azure_plan.outputs.destroy_list }}"
+            fi
           fi
           echo "============================================================"
           echo "  Click Approve in the GitHub Actions UI to proceed."
@@ -655,7 +689,11 @@ jobs:
       (needs.azure_plan.result == 'success' || needs.azure_plan.result == 'skipped') &&
       (
         needs.azure_approve.result == 'success' ||
-        (needs.azure_approve.result == 'skipped' && needs.setup.outputs.scheduled == 'true')
+        needs.azure_approve.result == 'skipped'
+      ) &&
+      (
+        needs.azure_approve.result != 'skipped' ||
+        needs.setup.outputs.scheduled == 'true'
       )
 
     defaults:
@@ -915,31 +953,32 @@ jobs:
           title: "GCP ${{ needs.setup.outputs.env }} — Plan (OPA: ${{ steps.opa_cost.outputs.exit_code == '0' && 'OK' || 'WARN' }})"
 
   # ===========================================================================
-  # GCP — Approve (destruction gate)
-  # Same conditions as azure_approve — shared environment.
+  # GCP — Approve (mandatory gate for ALL apply and destroy)
+  #
+  # Fires when:
+  #   • manual apply (with OR without deletions in plan)
+  #   • manual destroy (any scope, any env)
+  #
+  # Skipped for:
+  #   • scheduled runs (no human available — intentional auto-run)
+  #   • plan-only runs
   # ===========================================================================
   gcp_approve:
-    name: "⚠️ Approve — GCP (Destructive)"
+    name: "⚠️ Approve — GCP ${{ needs.setup.outputs.env }} ${{ needs.setup.outputs.action }} (${{ needs.setup.outputs.scope }})"
     runs-on: ubuntu-latest
     needs: [setup, gcp_plan]
     if: |
       needs.setup.outputs.scheduled == 'false' &&
       needs.setup.outputs.run_gcp == 'true' &&
-      (
-        needs.setup.outputs.action == 'destroy' ||
-        (
-          needs.setup.outputs.action == 'apply' &&
-          needs.gcp_plan.result == 'success' &&
-          needs.gcp_plan.outputs.has_destroys == 'true'
-        )
-      )
+      (needs.gcp_plan.result == 'success' || needs.gcp_plan.result == 'skipped') &&
+      (needs.setup.outputs.action == 'apply' || needs.setup.outputs.action == 'destroy')
     environment: terraform-destructive-approval
 
     steps:
-      - name: Summarise what will be destroyed
+      - name: Summarise what will happen
         run: |
           echo "============================================================"
-          echo "  ⚠️  DESTRUCTIVE OPERATION — GCP ${{ needs.setup.outputs.env }}"
+          echo "  ⚠️  APPROVAL REQUIRED — GCP ${{ needs.setup.outputs.env }}"
           echo "============================================================"
           echo "  Action : ${{ needs.setup.outputs.action }}"
           echo "  Scope  : ${{ needs.setup.outputs.scope }}"
@@ -955,9 +994,16 @@ jobs:
               echo "  WARNING:    Cloud SQL data and container images will be DELETED."
             fi
           else
-            echo "  Destroys in plan: ${{ needs.gcp_plan.outputs.destroy_count }} resource(s)"
-            echo ""
-            echo "${{ needs.gcp_plan.outputs.destroy_list }}"
+            DESTROY_COUNT="${{ needs.gcp_plan.outputs.destroy_count }}"
+            if [ -z "$DESTROY_COUNT" ] || [ "$DESTROY_COUNT" = "0" ]; then
+              echo ""
+              echo "  This apply has NO resource deletions."
+              echo "  Approval is still required for all apply operations."
+            else
+              echo "  Destroys in plan: $DESTROY_COUNT resource(s)"
+              echo ""
+              echo "${{ needs.gcp_plan.outputs.destroy_list }}"
+            fi
           fi
           echo "============================================================"
           echo "  Click Approve in the GitHub Actions UI to proceed."
@@ -975,7 +1021,14 @@ jobs:
       needs.setup.outputs.run_gcp == 'true' &&
       needs.setup.outputs.action != 'plan' &&
       (needs.gcp_plan.result == 'success' || needs.gcp_plan.result == 'skipped') &&
-      (needs.gcp_approve.result == 'success' || needs.gcp_approve.result == 'skipped')
+      (
+        needs.gcp_approve.result == 'success' ||
+        needs.gcp_approve.result == 'skipped'
+      ) &&
+      (
+        needs.gcp_approve.result != 'skipped' ||
+        needs.setup.outputs.scheduled == 'true'
+      )
 
     defaults:
       run:
