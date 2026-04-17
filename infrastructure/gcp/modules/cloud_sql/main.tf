@@ -70,27 +70,27 @@ resource "google_sql_database_instance" "this" {
   region           = var.region
   database_version = "POSTGRES_16"
 
-  deletion_protection = false   # allow destroy in dev/qa
+  deletion_protection = false # allow destroy in dev/qa
 
   settings {
     tier              = var.db_tier
     availability_type = var.environment == "prod" ? "REGIONAL" : "ZONAL"
 
-    disk_size       = 10    # GiB — minimum
+    disk_size       = 10 # GiB — minimum
     disk_type       = "PD_SSD"
     disk_autoresize = true
 
     backup_configuration {
       enabled                        = true
       start_time                     = "03:00"
-      point_in_time_recovery_enabled = false   # only for prod
+      point_in_time_recovery_enabled = false # only for prod
       backup_retention_settings {
         retained_backups = 7
       }
     }
 
     ip_configuration {
-      ipv4_enabled    = false   # private IP only
+      ipv4_enabled    = false # private IP only
       private_network = var.vpc_network_id
     }
 
@@ -100,7 +100,7 @@ resource "google_sql_database_instance" "this" {
     }
 
     insights_config {
-      query_insights_enabled = false   # saves cost in dev/qa
+      query_insights_enabled = false # saves cost in dev/qa
     }
 
     user_labels = var.labels
@@ -203,10 +203,10 @@ resource "google_secret_manager_secret_version" "django_secret_key" {
 # ── Grant GKE node SA access to secrets ───────────────────────────────────────
 locals {
   db_secrets = {
-    db_host          = google_secret_manager_secret.db_host
-    db_name          = google_secret_manager_secret.db_name
-    db_user          = google_secret_manager_secret.db_user
-    db_password      = google_secret_manager_secret.db_password
+    db_host           = google_secret_manager_secret.db_host
+    db_name           = google_secret_manager_secret.db_name
+    db_user           = google_secret_manager_secret.db_user
+    db_password       = google_secret_manager_secret.db_password
     django_secret_key = google_secret_manager_secret.django_secret_key
   }
 }

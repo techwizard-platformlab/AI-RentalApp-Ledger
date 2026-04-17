@@ -15,11 +15,6 @@ variable "location" {
   default = "us-central1"
 }
 
-variable "gke_service_account" {
-  type    = string
-  default = ""
-}
-
 variable "labels" {
   type    = map(string)
   default = {}

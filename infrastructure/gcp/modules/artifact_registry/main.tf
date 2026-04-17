@@ -1,6 +1,7 @@
 # Artifact Registry — modern replacement for GCR (Container Registry)
 # Cost note: storage ~$0.10/GB/month + network egress. For dev, storage is near zero.
 # DOCKER format chosen for container image storage.
+# IAM bindings (GKE reader, CI writer) are managed in the calling environment module.
 resource "google_artifact_registry_repository" "this" {
   repository_id = "${var.environment}-${var.region_short}-docker"
   location      = var.location
@@ -24,18 +25,7 @@ resource "google_artifact_registry_repository" "this" {
     action = "DELETE"
     condition {
       tag_state  = "UNTAGGED"
-      older_than = "2592000s"  # 30 days in seconds — GCP Duration type requires "Xs" format
+      older_than = "2592000s" # 30 days in seconds — GCP Duration type requires "Xs" format
     }
   }
-}
-
-# Grant GKE service account pull access to the registry
-resource "google_artifact_registry_repository_iam_member" "gke_reader" {
-  count = var.gke_service_account != "" ? 1 : 0
-
-  project    = var.project_id
-  location   = var.location
-  repository = google_artifact_registry_repository.this.name
-  role       = "roles/artifactregistry.reader"
-  member     = "serviceAccount:${var.gke_service_account}"
 }

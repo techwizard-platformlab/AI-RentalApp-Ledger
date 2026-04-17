@@ -16,7 +16,7 @@ resource "google_secret_manager_secret" "this" {
   project   = var.project_id
 
   replication {
-    auto {}  # auto replication — simpler and sufficient for dev/qa
+    auto {} # auto replication — simpler and sufficient for dev/qa
   }
 
   labels = var.labels
@@ -30,7 +30,7 @@ resource "google_secret_manager_secret_version" "placeholder" {
   for_each = google_secret_manager_secret.this
 
   secret      = each.value.id
-  secret_data = "REPLACE_ME"  # placeholder; override manually or via CI/CD
+  secret_data = "REPLACE_ME" # placeholder; override manually or via CI/CD
 }
 
 # Grant GKE workload identity accessor role so pods can read secrets at runtime

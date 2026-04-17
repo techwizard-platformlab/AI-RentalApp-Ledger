@@ -2,8 +2,8 @@
 # Cost note: STANDARD US multi-region ~$0.026/GB/month.
 # Nearline/Coldline would be cheaper but have retrieval fees — wrong fit for tfstate.
 resource "google_storage_bucket" "this" {
-  name          = "${var.project_id}-${var.environment}-${var.suffix}"  # globally unique
-  location      = var.location  # "US" = multi-region; cheapest per-GB for frequently accessed data
+  name          = "${var.project_id}-${var.environment}-${var.suffix}" # globally unique
+  location      = var.location                                         # "US" = multi-region; cheapest per-GB for frequently accessed data
   project       = var.project_id
   storage_class = "STANDARD"
 
@@ -15,8 +15,8 @@ resource "google_storage_bucket" "this" {
   # Lifecycle: delete non-current versions older than 30 days to control storage cost
   lifecycle_rule {
     condition {
-      age                = 30
-      with_state         = "ARCHIVED"
+      age        = 30
+      with_state = "ARCHIVED"
     }
     action {
       type = "Delete"

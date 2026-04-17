@@ -67,7 +67,7 @@ resource "google_service_account" "terraform_ci" {
 # IAM roles for the Terraform SA
 resource "google_project_iam_member" "terraform_editor" {
   project = var.project_id
-  role    = "roles/editor"  # broad for dev/learning; restrict in prod
+  role    = "roles/editor" # broad for dev/learning; restrict in prod
   member  = "serviceAccount:${google_service_account.terraform_ci.email}"
 }
 

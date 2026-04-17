@@ -6,7 +6,7 @@ resource "azurerm_kubernetes_cluster" "this" {
   resource_group_name = var.resource_group_name
   dns_prefix          = "${var.environment}-${var.location_short}-aks"
   kubernetes_version  = var.kubernetes_version
-  sku_tier            = "Free"   # Standard costs $0.10/hr and triggers agentPools/write on update; Free avoids both
+  sku_tier            = "Free" # Standard costs $0.10/hr and triggers agentPools/write on update; Free avoids both
 
   default_node_pool {
     name                 = "system"
@@ -23,12 +23,12 @@ resource "azurerm_kubernetes_cluster" "this" {
   }
 
   network_profile {
-    network_plugin     = "azure"
-    load_balancer_sku  = "standard"
-    outbound_type      = "loadBalancer"
+    network_plugin    = "azure"
+    load_balancer_sku = "standard"
+    outbound_type     = "loadBalancer"
     # Must not overlap with VNet (10.0.0.0/16) or subnets (10.0.1-3.0/24)
-    service_cidr       = "10.1.0.0/16"
-    dns_service_ip     = "10.1.0.10"
+    service_cidr   = "10.1.0.0/16"
+    dns_service_ip = "10.1.0.10"
   }
 
   # Disable add-ons not needed for this deployment (reduces cost and complexity)
@@ -38,8 +38,8 @@ resource "azurerm_kubernetes_cluster" "this" {
 
   # OIDC issuer — once enabled it cannot be disabled (Azure platform restriction).
   # Keep true to match existing cluster state and avoid 400 OIDCIssuerFeatureCannotBeDisabled.
-  oidc_issuer_enabled      = true
-  workload_identity_enabled = false   # not needed; keep OIDC issuer only
+  oidc_issuer_enabled       = true
+  workload_identity_enabled = false # not needed; keep OIDC issuer only
 
   tags = var.tags
 
@@ -73,7 +73,7 @@ resource "azurerm_kubernetes_cluster_node_pool" "appnode" {
   vm_size               = var.appnode_vm_size
   vnet_subnet_id        = var.subnet_id
   os_disk_size_gb       = var.os_disk_size_gb
-  mode                  = "User"   # User pool: application workloads only
+  mode                  = "User" # User pool: application workloads only
 
   auto_scaling_enabled = true
   min_count            = 1

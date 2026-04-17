@@ -15,12 +15,12 @@ resource "azurerm_storage_account" "this" {
   location                 = var.location
   resource_group_name      = var.resource_group_name
   account_tier             = "Standard"
-  account_replication_type = "LRS"       # LRS = cheapest; no geo-redundancy for dev
+  account_replication_type = "LRS" # LRS = cheapest; no geo-redundancy for dev
   account_kind             = "StorageV2"
 
-  https_traffic_only_enabled       = true  # enforce HTTPS
-  min_tls_version                  = "TLS1_2"
-  allow_nested_items_to_be_public  = false # block anonymous blob access
+  https_traffic_only_enabled      = true # enforce HTTPS
+  min_tls_version                 = "TLS1_2"
+  allow_nested_items_to_be_public = false # block anonymous blob access
 
   tags = var.tags
 }

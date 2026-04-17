@@ -5,7 +5,7 @@
 
 terraform {
   backend "gcs" {
-    bucket = "<TF_BACKEND_BUCKET>"   # from bootstrap output
+    bucket = "<TF_BACKEND_BUCKET>" # from bootstrap output
     prefix = "rentalledger/dev"
   }
 }

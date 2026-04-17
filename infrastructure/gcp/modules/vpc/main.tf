@@ -1,7 +1,7 @@
 # VPC — custom mode prevents auto-subnet sprawl across all regions (cost + security)
 resource "google_compute_network" "this" {
   name                    = "${var.environment}-${var.region_short}-vpc"
-  auto_create_subnetworks = false  # custom mode: only create subnets we define
+  auto_create_subnetworks = false # custom mode: only create subnets we define
   project                 = var.project_id
 }
 
@@ -12,7 +12,7 @@ resource "google_compute_subnetwork" "app" {
   network                  = google_compute_network.this.id
   ip_cidr_range            = var.app_subnet_cidr
   project                  = var.project_id
-  private_ip_google_access = true  # allow nodes to reach Google APIs without external IP
+  private_ip_google_access = true # allow nodes to reach Google APIs without external IP
 
   # Secondary ranges for GKE pods and services
   secondary_ip_range {
@@ -50,7 +50,7 @@ resource "google_compute_router_nat" "this" {
   router                             = google_compute_router.this.name
   region                             = var.region
   project                            = var.project_id
-  nat_ip_allocate_option             = "AUTO_ONLY"          # no reserved IPs (cost saving)
+  nat_ip_allocate_option             = "AUTO_ONLY" # no reserved IPs (cost saving)
   source_subnetwork_ip_ranges_to_nat = "LIST_OF_SUBNETWORKS"
 
   subnetwork {
@@ -60,7 +60,7 @@ resource "google_compute_router_nat" "this" {
 
   log_config {
     enable = true
-    filter = "ERRORS_ONLY"  # log only errors to keep Logging costs low
+    filter = "ERRORS_ONLY" # log only errors to keep Logging costs low
   }
 }
 

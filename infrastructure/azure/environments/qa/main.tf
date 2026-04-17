@@ -7,7 +7,9 @@
 #   mssql                → Azure SQL Database (S1, ~$15/month)
 # Only one module is deployed; the other has count = 0.
 #
-# Does NOT manage: ACR, Key Vault (shared — see infrastructure/azure/shared/)
+# Key Vault is env-specific — manages qa secrets only.
+# ACR is shared — referenced via data source; AcrPull granted to AKS here.
+#
 # Resource group: my-Rental-App-QA (destroy-safe)
 # =============================================================================
 
@@ -39,29 +41,43 @@ locals {
   }
 }
 
-# ── Env resource group (Terraform-owned — destroyed with the environment) ─────
+# ── Env resource group ────────────────────────────────────────────────────────
 resource "azurerm_resource_group" "env" {
   name     = var.env_resource_group_name
   location = var.location
   tags     = local.tags
 }
 
-# ── Shared resource references (data sources — not managed here) ──────────────
-# Conditional: skipped if shared layer has not yet run (acr_name / key_vault_name empty).
-locals {
-  shared_ready = var.acr_name != "" && var.key_vault_name != ""
-}
-
+# ── Shared ACR reference ──────────────────────────────────────────────────────
 data "azurerm_container_registry" "shared" {
-  count               = local.shared_ready ? 1 : 0
   name                = var.acr_name
   resource_group_name = var.shared_resource_group_name
 }
 
-data "azurerm_key_vault" "shared" {
-  count               = local.shared_ready ? 1 : 0
-  name                = var.key_vault_name
-  resource_group_name = var.shared_resource_group_name
+# ── Key Vault — env-specific secrets ─────────────────────────────────────────
+module "keyvault" {
+  source              = "../../modules/keyvault"
+  environment         = local.env
+  location            = var.location
+  location_short      = local.location_short
+  resource_group_name = azurerm_resource_group.env.name
+  tags                = local.tags
+}
+
+# Key Vault Secrets Officer — GitHub Actions CI/CD can read and write secrets
+resource "azurerm_role_assignment" "github_kv_secrets_officer" {
+  scope                = module.keyvault.id
+  role_definition_name = "Key Vault Secrets Officer"
+  principal_id         = var.github_actions_principal_id
+  depends_on           = [module.keyvault]
+}
+
+# Store shared ACR login server URL in env Key Vault for app consumption
+resource "azurerm_key_vault_secret" "acr_login_server" {
+  name         = "acr-login-server"
+  value        = data.azurerm_container_registry.shared.login_server
+  key_vault_id = module.keyvault.id
+  depends_on   = [azurerm_role_assignment.github_kv_secrets_officer]
 }
 
 # ── Networking ────────────────────────────────────────────────────────────────
@@ -101,6 +117,13 @@ module "aks" {
   tags                = local.tags
 }
 
+# AcrPull — AKS pods can pull images from the shared registry
+resource "azurerm_role_assignment" "aks_acr_pull" {
+  scope                = data.azurerm_container_registry.shared.id
+  role_definition_name = "AcrPull"
+  principal_id         = module.aks.kubelet_identity_object_id
+}
+
 module "load_balancer" {
   source              = "../../modules/load_balancer"
   environment         = local.env
@@ -111,10 +134,6 @@ module "load_balancer" {
 }
 
 # ── Data storage ──────────────────────────────────────────────────────────────
-# Exactly one database module is deployed, chosen by var.db_engine (terraform.tfvars).
-# Default: postgresql. To switch to Azure SQL set db_engine = "mssql" in tfvars.
-# Secrets are written to the shared Key Vault by each module.
-
 module "postgresql" {
   count  = var.db_engine == "postgresql" ? 1 : 0
   source = "../../modules/postgresql"
@@ -127,7 +146,7 @@ module "postgresql" {
   storage_mb          = var.postgresql_storage_mb
   storage_tier        = var.postgresql_storage_tier
   aks_subnet_cidr     = local.cfg.subnet_cidrs["aks"]
-  key_vault_id        = local.shared_ready ? data.azurerm_key_vault.shared[0].id : null
+  key_vault_id        = module.keyvault.id
   tags                = local.tags
 }
 
@@ -142,7 +161,7 @@ module "sql_database" {
   db_sku              = var.mssql_sku
   max_size_gb         = var.mssql_max_size_gb
   aks_subnet_cidr     = local.cfg.subnet_cidrs["aks"]
-  key_vault_name      = local.shared_ready ? data.azurerm_key_vault.shared[0].name : null
+  key_vault_name      = module.keyvault.name
   tags                = local.tags
 }
 

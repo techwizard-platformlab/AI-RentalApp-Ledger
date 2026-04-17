@@ -8,7 +8,7 @@ resource "google_compute_security_policy" "this" {
   # Default rule: allow all traffic (explicit deny rules below will override)
   rule {
     action   = "allow"
-    priority = "2147483647"  # lowest priority = default
+    priority = "2147483647" # lowest priority = default
     match {
       versioned_expr = "SRC_IPS_V1"
       config {

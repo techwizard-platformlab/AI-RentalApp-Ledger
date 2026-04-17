@@ -21,7 +21,7 @@ resource "random_password" "sql_admin" {
 # Random Django SECRET_KEY
 resource "random_password" "django_secret_key" {
   length  = 64
-  special = false   # avoid shell quoting issues in K8s secrets
+  special = false # avoid shell quoting issues in K8s secrets
 }
 
 # ── SQL Logical Server ─────────────────────────────────────────────────────────
@@ -34,13 +34,13 @@ resource "azurerm_mssql_server" "this" {
   administrator_login_password = random_password.sql_admin.result
 
   # Disable public network access — use firewall rules instead
-  public_network_access_enabled = true   # required for AKS egress without private endpoint
+  public_network_access_enabled = true # required for AKS egress without private endpoint
 
   tags = var.tags
 
   lifecycle {
     ignore_changes  = [administrator_login_password]
-    prevent_destroy = true   # data loss protection — use 'terraform state rm' to override
+    prevent_destroy = true # data loss protection — use 'terraform state rm' to override
   }
 }
 
@@ -50,7 +50,7 @@ resource "azurerm_mssql_database" "rental" {
   server_id = azurerm_mssql_server.this.id
 
   # Supported SKUs — Basic for dev, S0/S1 for qa
-  sku_name   = var.db_sku
+  sku_name    = var.db_sku
   max_size_gb = var.max_size_gb
 
   # Local backup redundancy — sufficient for dev/qa, lower cost
@@ -62,7 +62,7 @@ resource "azurerm_mssql_database" "rental" {
     # storage_account_type and max_size_gb drift between Azure API response ("LocallyRedundant")
     # and provider value ("Local"), causing a ForceNew replace on every apply.
     ignore_changes  = [storage_account_type, max_size_gb]
-    prevent_destroy = true   # data loss protection — use 'terraform state rm' to override
+    prevent_destroy = true # data loss protection — use 'terraform state rm' to override
   }
 }
 
@@ -88,9 +88,9 @@ resource "azurerm_mssql_firewall_rule" "allow_aks" {
 # avoids the Terraform provider RBAC check; ensure the SP has Key Vault Secrets Officer.
 resource "null_resource" "kv_secrets" {
   triggers = {
-    server_fqdn  = azurerm_mssql_server.this.fully_qualified_domain_name
-    db_name      = azurerm_mssql_database.rental.name
-    kv_name      = var.key_vault_name
+    server_fqdn = azurerm_mssql_server.this.fully_qualified_domain_name
+    db_name     = azurerm_mssql_database.rental.name
+    kv_name     = var.key_vault_name
   }
 
   provisioner "local-exec" {

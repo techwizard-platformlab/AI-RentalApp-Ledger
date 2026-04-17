@@ -1,11 +1,11 @@
 # =============================================================================
-# Terraform GCP Remote State Backend — qa environment
+# Terraform GCP Remote State Backend — shared resources
 # Values are populated after running bootstrap/gcp/bootstrap.sh
 # =============================================================================
 
 terraform {
   backend "gcs" {
     bucket = "<TF_BACKEND_BUCKET>" # from bootstrap output
-    prefix = "rentalledger/qa"
+    prefix = "rentalledger/shared"
   }
 }

@@ -8,3 +8,7 @@ environment = "dev"
 region      = "us-central1"
 github_org  = "ramprasath-technology"
 github_repo = "AI-RentalApp-Ledger"
+
+# From gcp/shared/ outputs — populated after first shared apply
+ar_repository_id = "shared-use1-docker"
+ar_location      = "us-central1"

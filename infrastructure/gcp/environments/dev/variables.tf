@@ -1,6 +1,7 @@
 # =============================================================================
 # Variable sources:
-#   terraform.tfvars (committed)  → environment, region, github_org, github_repo
+#   terraform.tfvars (committed)  → environment, region, github_org, github_repo,
+#                                   ar_repository_id, ar_location
 #   GitHub Secret → TF_VAR_*     → project_id
 # =============================================================================
 
@@ -32,4 +33,15 @@ variable "github_org" {
 variable "github_repo" {
   description = "Set in terraform.tfvars"
   type        = string
+}
+
+variable "ar_repository_id" {
+  description = "Shared Artifact Registry repository ID (from gcp/shared/ outputs)"
+  type        = string
+}
+
+variable "ar_location" {
+  description = "Location of the shared Artifact Registry"
+  type        = string
+  default     = "us-central1"
 }

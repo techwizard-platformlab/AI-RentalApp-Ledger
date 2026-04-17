@@ -9,7 +9,7 @@
 # so the budget resource is never rejected by Azure for having empty contacts.
 
 locals {
-  emails       = length(var.alert_emails) > 0 ? var.alert_emails : []
+  emails        = length(var.alert_emails) > 0 ? var.alert_emails : []
   contact_roles = length(var.alert_emails) > 0 ? [] : ["Owner"]
 }
 

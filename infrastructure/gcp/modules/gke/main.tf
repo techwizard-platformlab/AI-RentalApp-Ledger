@@ -3,7 +3,7 @@
 # Single node (e2-standard-2) keeps resource usage low (cost constraint).
 resource "google_container_cluster" "this" {
   name     = "${var.environment}-${var.region_short}-gke"
-  location = var.cluster_location   # zone (e.g. us-central1-a) for dev/qa single-node; region for prod HA
+  location = var.cluster_location # zone (e.g. us-central1-a) for dev/qa single-node; region for prod HA
   project  = var.project_id
 
   # Remove default node pool so we can define our own with granular settings
@@ -22,7 +22,7 @@ resource "google_container_cluster" "this" {
   # Private cluster — nodes have no public IPs (more secure, uses Cloud NAT for egress)
   private_cluster_config {
     enable_private_nodes    = true
-    enable_private_endpoint = false  # keep master endpoint public for kubectl access during learning
+    enable_private_endpoint = false # keep master endpoint public for kubectl access during learning
     master_ipv4_cidr_block  = var.master_ipv4_cidr
   }
 
@@ -48,10 +48,10 @@ resource "google_container_cluster" "this" {
   # Disable costly add-ons not needed for learning
   addons_config {
     http_load_balancing {
-      disabled = false  # keep for ingress
+      disabled = false # keep for ingress
     }
     horizontal_pod_autoscaling {
-      disabled = true  # disable to avoid unexpected node scale-out
+      disabled = true # disable to avoid unexpected node scale-out
     }
     network_policy_config {
       disabled = false
@@ -65,7 +65,7 @@ resource "google_container_cluster" "this" {
   }
 
   release_channel {
-    channel = "REGULAR"  # REGULAR = stable updates; RAPID = bleeding edge
+    channel = "REGULAR" # REGULAR = stable updates; RAPID = bleeding edge
   }
 
   resource_labels = var.labels
@@ -77,14 +77,14 @@ resource "google_container_cluster" "this" {
 resource "google_container_node_pool" "primary" {
   name       = "${var.environment}-${var.region_short}-nodepool"
   cluster    = google_container_cluster.this.name
-  location   = var.cluster_location   # must match cluster location
+  location   = var.cluster_location # must match cluster location
   project    = var.project_id
-  node_count = var.node_count  # 1 in dev (zonal) = exactly 1 node = 2 vCPU (cost constraint)
+  node_count = var.node_count # 1 in dev (zonal) = exactly 1 node = 2 vCPU (cost constraint)
 
   node_config {
-    machine_type    = var.machine_type   # e2-standard-2 (cost constraint: keep resource usage low)
-    disk_size_gb    = var.disk_size_gb   # cost constraint: keep disk size low
-    disk_type       = "pd-standard"      # standard persistent disk — cheapest option
+    machine_type = var.machine_type # e2-standard-2 (cost constraint: keep resource usage low)
+    disk_size_gb = var.disk_size_gb # cost constraint: keep disk size low
+    disk_type    = "pd-standard"    # standard persistent disk — cheapest option
     # Attach the least-privilege SA — without this GKE defaults to the broad Compute SA
     service_account = google_service_account.gke_nodes.email
 
