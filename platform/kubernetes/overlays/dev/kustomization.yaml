@@ -21,10 +21,10 @@ labels:
 # Image tags — updated by ArgoCD Image Updater after each CI push
 images:
   - name: rental-app-ledger
-    newName: rentaleusacrcavcl4.azurecr.io/rental-app-ledger
+    newName: deveus2acrzwtbhs.azurecr.io/rental-app-ledger
     newTag: latest
   - name: rental-rag-api
-    newName: rentaleusacrcavcl4.azurecr.io/rental-rag-api
+    newName: deveus2acrzwtbhs.azurecr.io/rental-rag-api
     newTag: latest
 
 # Env-specific patches — configmaps, resource tuning
