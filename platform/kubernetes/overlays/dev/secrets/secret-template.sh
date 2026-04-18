@@ -8,7 +8,7 @@
 # =============================================================================
 set -euo pipefail
 
-KV="${KEY_VAULT_NAME:-rental-shared-kv}"
+KV="${KEY_VAULT_NAME:-dev-eus2-kv-4lde}"
 NS="rental-dev"
 
 kv_secret() { az keyvault secret show --vault-name "$KV" --name "$1" --query value -o tsv; }

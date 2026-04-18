@@ -13,6 +13,6 @@ spec:
     app: rag-api
   ports:
     - name: http
-      port: 8004
-      targetPort: 8004
+      port: 8080
+      targetPort: 8080
       protocol: TCP

@@ -5,6 +5,7 @@ namespace: rental-dev
 
 resources:
   - namespace.yaml
+  - secrets/cluster-secret-store.yaml
   - ../../base/api-gateway
   - ../../base/rental-service
   - ../../base/ledger-service

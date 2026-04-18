@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chroma-pvc
+  labels:
+    app: rag-api
+    project: rentalAppLedger
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+  # No storageClassName = use cluster default (managed-csi on AKS, standard on GKE)

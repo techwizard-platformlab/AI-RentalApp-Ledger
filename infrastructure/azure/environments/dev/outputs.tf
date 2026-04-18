@@ -39,6 +39,11 @@ output "db_admin_username" {
   )
 }
 
+output "eso_client_id" {
+  description = "Client ID of the ESO managed identity — paste into external-secrets-app.yaml after terraform apply"
+  value       = azurerm_user_assigned_identity.eso.client_id
+}
+
 output "environment" {
   description = "Deployed environment name"
   value       = var.environment

@@ -39,7 +39,7 @@ resource "azurerm_kubernetes_cluster" "this" {
   # OIDC issuer — once enabled it cannot be disabled (Azure platform restriction).
   # Keep true to match existing cluster state and avoid 400 OIDCIssuerFeatureCannotBeDisabled.
   oidc_issuer_enabled       = true
-  workload_identity_enabled = false # not needed; keep OIDC issuer only
+  workload_identity_enabled = true  # required for ESO pod-to-Key Vault auth via federated identity
 
   tags = var.tags
 

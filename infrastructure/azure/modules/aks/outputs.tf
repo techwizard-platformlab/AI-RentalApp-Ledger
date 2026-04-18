@@ -15,3 +15,8 @@ output "principal_id" {
   description = "AKS system-assigned managed identity principal ID"
   value       = azurerm_kubernetes_cluster.this.identity[0].principal_id
 }
+
+output "oidc_issuer_url" {
+  description = "OIDC issuer URL — used to federate K8s ServiceAccounts with Azure Managed Identities"
+  value       = azurerm_kubernetes_cluster.this.oidc_issuer_url
+}

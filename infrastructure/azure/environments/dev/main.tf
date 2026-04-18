@@ -178,6 +178,35 @@ module "storage_account" {
   tags                = local.tags
 }
 
+# ── External Secrets Operator identity ───────────────────────────────────────
+# Allows the ESO pod (running in AKS) to read secrets from Key Vault
+# without any static credentials — uses federated workload identity.
+resource "azurerm_user_assigned_identity" "eso" {
+  name                = "${var.environment}-${var.location_short}-eso-identity"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.env.name
+  tags                = local.tags
+}
+
+resource "azurerm_role_assignment" "eso_kv_secrets_user" {
+  scope                = module.keyvault.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.eso.principal_id
+  depends_on           = [module.keyvault]
+}
+
+# Links the K8s ServiceAccount "external-secrets" (in ns "external-secrets")
+# to the managed identity above — no client secret required.
+resource "azurerm_federated_identity_credential" "eso" {
+  name                = "eso-federated"
+  resource_group_name = azurerm_resource_group.env.name
+  parent_id           = azurerm_user_assigned_identity.eso.id
+  audience            = ["api://AzureADTokenExchange"]
+  issuer              = module.aks.oidc_issuer_url
+  subject             = "system:serviceaccount:external-secrets:external-secrets"
+  depends_on          = [module.aks]
+}
+
 # ── Cost management ───────────────────────────────────────────────────────────
 module "budget" {
   source             = "../../modules/budget"

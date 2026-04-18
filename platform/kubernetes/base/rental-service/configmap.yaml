@@ -9,6 +9,6 @@ data:
   LOG_LEVEL: "INFO"
   DJANGO_SETTINGS_MODULE: "config.settings"
   ALLOWED_HOSTS: "rental-service,rental-service.rental-dev.svc.cluster.local,localhost,127.0.0.1"
-  SERVICE_PORT: "8001"
+  PORT: "8001"
   GUNICORN_WORKERS: "2"
   GUNICORN_TIMEOUT: "60"

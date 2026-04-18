@@ -7,12 +7,13 @@ metadata:
     project: rentalAppLedger
 data:
   LOG_LEVEL: "INFO"
-  SERVICE_PORT: "8004"
-  # ChromaDB local path inside container
-  CHROMA_PERSIST_DIR: "/chroma"
-  CHROMA_COLLECTION_NAME: "rental_ledger"
+  # Port is hardcoded in Dockerfile CMD (uvicorn --port 8080) — this is informational only
+  SERVICE_PORT: "8080"
+  # ChromaDB local path inside container — must match volume mountPath
+  CHROMA_PATH: "/chroma"
+  CHROMA_COLLECTION: "rental_ledger"
   # Embedding model (runs locally, no API key)
-  EMBEDDING_MODEL: "all-MiniLM-L6-v2"
+  EMBED_MODEL: "all-MiniLM-L6-v2"
   # LLM provider priority: ollama → groq → anthropic
   # LLM_PROVIDER and API keys come from rag-api-secret
   LLM_PROVIDER: "groq"

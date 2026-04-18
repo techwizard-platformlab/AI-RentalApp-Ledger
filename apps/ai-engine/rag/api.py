@@ -183,6 +183,8 @@ async def query(req: QueryRequest):
 
 @app.get("/health")
 async def health():
+    if "model" not in _state or "collection" not in _state:
+        raise HTTPException(status_code=503, detail="starting up")
     return {"status": "healthy", "provider": LLM_PROVIDER}
 
 

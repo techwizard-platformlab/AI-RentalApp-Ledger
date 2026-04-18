@@ -45,7 +45,7 @@ spec:
               service:
                 name: rag-api
                 port:
-                  number: 8004
+                  number: 8080
           - path: /(.*)
             pathType: ImplementationSpecific
             backend:

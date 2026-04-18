@@ -19,7 +19,7 @@ spec:
         project: rentalAppLedger
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "8004"
+        prometheus.io/port: "8080"
         prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: rag-api
@@ -41,7 +41,7 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
-              containerPort: 8004
+              containerPort: 8080
               protocol: TCP
           envFrom:
             - configMapRef:
@@ -60,18 +60,24 @@ spec:
             readOnlyRootFilesystem: false  # ChromaDB writes to /chroma volume
             capabilities:
               drop: [ALL]
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            failureThreshold: 20
+            periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /health
-              port: 8004
-            initialDelaySeconds: 20
+              port: 8080
+            initialDelaySeconds: 5
             periodSeconds: 15
             failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /health
-              port: 8004
-            initialDelaySeconds: 45
+              port: 8080
+            initialDelaySeconds: 5
             periodSeconds: 20
             failureThreshold: 3
           volumeMounts:
@@ -83,5 +89,5 @@ spec:
         - name: tmp-dir
           emptyDir: {}
         - name: chroma-data
-          emptyDir: {}
-          # For production: replace emptyDir with a PVC for vector persistence
+          persistentVolumeClaim:
+            claimName: chroma-pvc
