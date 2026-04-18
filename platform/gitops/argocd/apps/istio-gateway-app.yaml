@@ -21,6 +21,12 @@ spec:
     helm:
       releaseName: istio-ingressgateway
       values: |
+        # Explicitly set image so the pod doesn't try to pull "auto:latest" from Docker Hub
+        # when istiod is not yet fully ready during first install.
+        hub: docker.io/istio
+        tag: "1.21.2"
+        image: proxyv2
+
         service:
           type: LoadBalancer
           ports:

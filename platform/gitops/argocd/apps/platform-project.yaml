@@ -20,6 +20,8 @@ spec:
       server: https://kubernetes.default.svc
     - namespace: istio-cni
       server: https://kubernetes.default.svc
+    - namespace: kube-system
+      server: https://kubernetes.default.svc
     - namespace: monitoring
       server: https://kubernetes.default.svc
     - namespace: rental-dev
