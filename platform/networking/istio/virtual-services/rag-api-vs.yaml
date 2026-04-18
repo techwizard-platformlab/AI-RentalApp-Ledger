@@ -12,7 +12,6 @@ spec:
     - route:
         - destination:
             host: rag-api.rental-dev.svc.cluster.local
-            subset: v1
             port:
               number: 8080
           weight: 100

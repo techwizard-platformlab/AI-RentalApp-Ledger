@@ -6,10 +6,8 @@ metadata:
 spec:
   hosts:
     - "*"
-    - api-gateway.rental-dev.svc.cluster.local
   gateways:
     - rental-gateway
-    - mesh
   http:
     - match:
         - uri:
@@ -21,14 +19,25 @@ spec:
       route:
         - destination:
             host: api-gateway.rental-dev.svc.cluster.local
-            subset: v1
             port:
               number: 8000
           weight: 100
-        # Canary placeholder
-        # - destination:
-        #     host: api-gateway.rental-dev.svc.cluster.local
-        #     subset: v2
-        #     port:
-        #       number: 8000
-        #   weight: 10
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: api-gateway-internal-vs
+  namespace: rental-dev
+spec:
+  hosts:
+    - api-gateway.rental-dev.svc.cluster.local
+  gateways:
+    - mesh
+  http:
+    - route:
+        - destination:
+            host: api-gateway.rental-dev.svc.cluster.local
+            port:
+              number: 8000
+          weight: 100
