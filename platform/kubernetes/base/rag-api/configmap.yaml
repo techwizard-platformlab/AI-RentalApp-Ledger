@@ -14,9 +14,10 @@ data:
   CHROMA_COLLECTION: "rental_ledger"
   # Embedding model (runs locally, no API key)
   EMBED_MODEL: "all-MiniLM-L6-v2"
-  # LLM provider priority: ollama → groq → anthropic
+  # LLM provider: ollama | groq | openai | claude
   # LLM_PROVIDER and API keys come from rag-api-secret
-  LLM_PROVIDER: "groq"
+  LLM_PROVIDER: "openai"
+  OPENAI_MODEL: "gpt-4o-mini"
   # Rate limiting
   RATE_LIMIT_PER_MINUTE: "10"
   # Indexer schedule — CronJob interval for re-indexing ledger data

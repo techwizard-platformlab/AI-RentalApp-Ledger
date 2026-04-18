@@ -1,0 +1,7 @@
+# Any change to workflow files requires explicit approval from the repo owner.
+# This prevents a merged PR from silently gaining access to repository secrets.
+.github/workflows/ @Ramprasath26
+
+# Terraform and Kubernetes infrastructure changes also require review.
+infrastructure/ @Ramprasath26
+platform/       @Ramprasath26

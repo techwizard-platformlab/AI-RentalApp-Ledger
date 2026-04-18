@@ -22,10 +22,12 @@ from sentence_transformers import SentenceTransformer
 CHROMA_PATH  = os.environ.get("CHROMA_PATH", "/data/chroma")
 COLLECTION   = os.environ.get("CHROMA_COLLECTION", "rental_ledger")
 EMBED_MODEL  = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2")
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "ollama")   # ollama | groq | claude
-OLLAMA_URL   = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+LLM_PROVIDER  = os.environ.get("LLM_PROVIDER", "ollama")   # ollama | groq | openai | claude
+OLLAMA_URL    = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL  = os.environ.get("OLLAMA_MODEL", "llama3.2")
+GROQ_API_KEY  = os.environ.get("GROQ_API_KEY", "")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_MODEL  = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 # ── State ─────────────────────────────────────────────────────────────────────
@@ -115,6 +117,23 @@ def _call_groq(prompt: str) -> str:
     return resp.json()["choices"][0]["message"]["content"]
 
 
+def _call_openai(prompt: str) -> str:
+    resp = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+        json={
+            "model": OPENAI_MODEL,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+        },
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"]
+
+
 def _call_claude(prompt: str) -> str:
     import anthropic
     c = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -133,6 +152,8 @@ def _generate(question: str, context_chunks: list[str]) -> str:
     prompt = _build_prompt(question, context_chunks)
     if LLM_PROVIDER == "groq":
         return _call_groq(prompt)
+    if LLM_PROVIDER == "openai":
+        return _call_openai(prompt)
     if LLM_PROVIDER == "claude":
         return _call_claude(prompt)
     return _call_ollama(prompt)
