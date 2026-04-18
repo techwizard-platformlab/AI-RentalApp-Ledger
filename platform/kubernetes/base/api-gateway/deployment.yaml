@@ -76,6 +76,7 @@ spec:
             periodSeconds: 10
             failureThreshold: 3
             successThreshold: 1
+            timeoutSeconds: 5
           livenessProbe:
             httpGet:
               path: /healthz
@@ -83,12 +84,14 @@ spec:
             initialDelaySeconds: 30
             periodSeconds: 15
             failureThreshold: 3
+            timeoutSeconds: 5
           startupProbe:
             httpGet:
               path: /healthz
               port: 8000
             failureThreshold: 10
             periodSeconds: 5
+            timeoutSeconds: 5
           volumeMounts:
             - mountPath: /tmp
               name: tmp-dir

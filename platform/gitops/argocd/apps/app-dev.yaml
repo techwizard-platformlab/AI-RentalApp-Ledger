@@ -34,9 +34,9 @@ spec:
     namespace: rental-dev
 
   syncPolicy:
-    automated:
-      prune: true       # Delete resources removed from git
-      selfHeal: true    # Revert manual cluster changes
+    # automated:
+    #   prune: true       # Delete resources removed from git
+    #   selfHeal: true    # Revert manual cluster changes
     syncOptions:
       - CreateNamespace=true
       - PrunePropagationPolicy=foreground
