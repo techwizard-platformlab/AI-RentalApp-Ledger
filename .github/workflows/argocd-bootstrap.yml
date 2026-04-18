@@ -483,11 +483,23 @@ jobs:
           PASS=$(kubectl get secret argocd-initial-admin-secret \
             -n "${{ env.NAMESPACE_ARGOCD }}" \
             -o jsonpath="{.data.password}" 2>/dev/null | base64 -d || echo "already-changed")
+          echo "::add-mask::$PASS"
           echo "password=$PASS" >> "$GITHUB_OUTPUT"
+
+      - name: Get ArgoCD LoadBalancer IP (apply-apps)
+        if: github.event.inputs.action == 'apply-apps'
+        id: argocd_ip_apply
+        run: |
+          IP=$(kubectl get svc argocd-server -n "${{ env.NAMESPACE_ARGOCD }}" \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+          [ -z "$IP" ] && IP=$(kubectl get svc argocd-server -n "${{ env.NAMESPACE_ARGOCD }}" \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+          echo "ip=${IP:-unknown}" >> "$GITHUB_OUTPUT"
 
       - name: Job summary
         if: always()
         run: |
+          ARGOCD_IP="${{ steps.argocd_ip.outputs.ip }}${{ steps.argocd_ip_apply.outputs.ip }}"
           echo "## ArgoCD Bootstrap — ${{ github.event.inputs.environment }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
@@ -496,13 +508,13 @@ jobs:
           echo "| Environment | ${{ github.event.inputs.environment }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| AKS Cluster | ${{ env.AKS_NAME }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| ACR | ${{ steps.acr.outputs.login_server }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| ArgoCD UI | http://${{ steps.argocd_ip.outputs.ip }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| ArgoCD UI | http://${ARGOCD_IP} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| ArgoCD Username | admin |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| ArgoCD Password | ${{ steps.argocd_pass.outputs.password }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| ArgoCD Password | See Kubernetes secret \`argocd-initial-admin-secret\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "### Next steps" >> "$GITHUB_STEP_SUMMARY"
-          echo "1. Open https://${{ steps.argocd_ip.outputs.ip }} in your browser (accept cert warning)" >> "$GITHUB_STEP_SUMMARY"
-          echo "2. Login with admin / password above" >> "$GITHUB_STEP_SUMMARY"
+          echo "1. Open https://${ARGOCD_IP} in your browser (accept cert warning)" >> "$GITHUB_STEP_SUMMARY"
+          echo "2. Login with admin / retrieve password from the Kubernetes secret" >> "$GITHUB_STEP_SUMMARY"
           echo "3. GitOps repo is already registered — app should show Synced" >> "$GITHUB_STEP_SUMMARY"
           echo "4. Run the CI workflow (techwizard-platformlab/RentalApp-Build) with registry: acr to push the first image" >> "$GITHUB_STEP_SUMMARY"
           echo "5. ArgoCD will auto-sync and deploy the app" >> "$GITHUB_STEP_SUMMARY"
