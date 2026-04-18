@@ -238,9 +238,8 @@ def build_secret_maps(env: dict) -> tuple[dict, dict, dict, dict]:
         "AZURE_CLIENT_ID":       client_id,
         "AZURE_TENANT_ID":       tenant_id,
         "AZURE_SUBSCRIPTION_ID": subscription_id,
-        # Container registry
-        "ACR_NAME":              acr_name,
-        "ACR_LOGIN_SERVER":      acr_login_server,
+        # Container registry — ACR name/server are env-specific (random suffix from Terraform)
+        # Fetched at runtime from Key Vault secret: acr-login-server
         # Docker Hub
         "DOCKERHUB_USERNAME":    dockerhub_user,
         "DOCKERHUB_TOKEN":       dockerhub_token,
@@ -258,7 +257,6 @@ def build_secret_maps(env: dict) -> tuple[dict, dict, dict, dict]:
 
     build_required = {
         "AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID",
-        "ACR_NAME", "ACR_LOGIN_SERVER",
     }
 
     def clean(d: dict) -> dict:
