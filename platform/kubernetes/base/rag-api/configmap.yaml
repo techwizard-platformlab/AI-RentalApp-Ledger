@@ -14,8 +14,6 @@ data:
   CHROMA_COLLECTION: "rental_ledger"
   # Embedding model (runs locally, no API key)
   EMBED_MODEL: "all-MiniLM-L6-v2"
-  # LLM provider: ollama | groq | openai | claude
-  # LLM_PROVIDER and API keys come from rag-api-secret
   LLM_PROVIDER: "openai"
   OPENAI_MODEL: "gpt-4o-mini"
   # Rate limiting

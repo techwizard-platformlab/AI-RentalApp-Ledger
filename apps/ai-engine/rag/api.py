@@ -1,7 +1,7 @@
 """
 api.py — FastAPI RAG query API for rentalAppLedger.
 Endpoints: POST /query, GET /health, GET /stats
-LLM provider: ollama | groq | claude (env: LLM_PROVIDER)
+LLM provider: openai (env: LLM_PROVIDER)
 """
 
 import os
@@ -22,13 +22,8 @@ from sentence_transformers import SentenceTransformer
 CHROMA_PATH  = os.environ.get("CHROMA_PATH", "/data/chroma")
 COLLECTION   = os.environ.get("CHROMA_COLLECTION", "rental_ledger")
 EMBED_MODEL  = os.environ.get("EMBED_MODEL", "all-MiniLM-L6-v2")
-LLM_PROVIDER  = os.environ.get("LLM_PROVIDER", "ollama")   # ollama | groq | openai | claude
-OLLAMA_URL    = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL  = os.environ.get("OLLAMA_MODEL", "llama3.2")
-GROQ_API_KEY  = os.environ.get("GROQ_API_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_MODEL  = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+OPENAI_MODEL   = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 
 # ── State ─────────────────────────────────────────────────────────────────────
 _state: dict[str, Any] = {}
@@ -83,40 +78,6 @@ def _build_prompt(question: str, context_chunks: list[str]) -> str:
     return f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
 
 
-def _call_ollama(prompt: str) -> str:
-    resp = requests.post(
-        f"{OLLAMA_URL}/api/chat",
-        json={
-            "model": OLLAMA_MODEL,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            "stream": False,
-        },
-        timeout=120,
-    )
-    resp.raise_for_status()
-    return resp.json()["message"]["content"]
-
-
-def _call_groq(prompt: str) -> str:
-    resp = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-        json={
-            "model": "llama3-8b-8192",
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-        },
-        timeout=60,
-    )
-    resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
-
-
 def _call_openai(prompt: str) -> str:
     resp = requests.post(
         "https://api.openai.com/v1/chat/completions",
@@ -134,29 +95,10 @@ def _call_openai(prompt: str) -> str:
     return resp.json()["choices"][0]["message"]["content"]
 
 
-def _call_claude(prompt: str) -> str:
-    import anthropic
-    c = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    msg = c.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=512,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return msg.content[0].text
-
-
 def _generate(question: str, context_chunks: list[str]) -> str:
     if not context_chunks:
         return "I don't have data on that. Please check the database directly."
-    prompt = _build_prompt(question, context_chunks)
-    if LLM_PROVIDER == "groq":
-        return _call_groq(prompt)
-    if LLM_PROVIDER == "openai":
-        return _call_openai(prompt)
-    if LLM_PROVIDER == "claude":
-        return _call_claude(prompt)
-    return _call_ollama(prompt)
+    return _call_openai(_build_prompt(question, context_chunks))
 
 
 def _sql_hint(question: str) -> str | None:
