@@ -28,6 +28,8 @@ spec:
   clusterResourceWhitelist:
     - group: ""
       kind: Namespace
+    - group: "external-secrets.io"
+      kind: ClusterSecretStore
 
   namespaceResourceWhitelist:
     - group: "apps"
@@ -52,8 +54,6 @@ spec:
       kind: ExternalSecret
     - group: "external-secrets.io"
       kind: SecretStore
-    - group: "external-secrets.io"
-      kind: ClusterSecretStore
 
   # Orphaned resource monitoring — warn on resources not managed by ArgoCD
   orphanedResources:
