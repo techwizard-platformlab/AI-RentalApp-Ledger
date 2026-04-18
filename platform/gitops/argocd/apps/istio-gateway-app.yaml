@@ -1,0 +1,62 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: istio-gateway
+  namespace: argocd
+  labels:
+    project: rentalAppLedger
+    tier: platform
+    component: istio
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"   # Install after istiod
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform-addons
+
+  source:
+    repoURL: "https://istio-release.storage.googleapis.com/charts"
+    chart: gateway
+    targetRevision: "1.21.2"
+    helm:
+      releaseName: istio-ingressgateway
+      values: |
+        service:
+          type: LoadBalancer
+          ports:
+            - name: http2
+              port: 80
+              targetPort: 8080
+            - name: https
+              port: 443
+              targetPort: 8443
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        autoscaling:
+          enabled: false
+        replicaCount: 1
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: istio-system
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 2m
+
+  revisionHistoryLimit: 3

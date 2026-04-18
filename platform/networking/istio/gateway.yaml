@@ -10,25 +10,32 @@ spec:
   selector:
     istio: ingressgateway   # uses the default Istio ingress gateway
   servers:
-    - port:
-        number: 443
-        name: https
-        protocol: HTTPS
-      tls:
-        mode: SIMPLE
-        credentialName: rental-app-tls   # cert-manager creates this Secret
-      hosts:
-        - rental-app.example.com   # replace with actual domain or nip.io address
-
-    # Redirect HTTP → HTTPS
+    # Dev: plain HTTP on port 80, wildcard host (IP-based access, no TLS)
     - port:
         number: 80
         name: http
         protocol: HTTP
-      tls:
-        httpsRedirect: true
       hosts:
-        - rental-app.example.com
+        - "*"
+
+    # Prod: HTTPS with TLS termination — enable when cert-manager is configured
+    # - port:
+    #     number: 443
+    #     name: https
+    #     protocol: HTTPS
+    #   tls:
+    #     mode: SIMPLE
+    #     credentialName: rental-app-tls
+    #   hosts:
+    #     - rental-app.example.com
+    # - port:
+    #     number: 80
+    #     name: http-redirect
+    #     protocol: HTTP
+    #   tls:
+    #     httpsRedirect: true
+    #   hosts:
+    #     - rental-app.example.com
 
 ---
 # ─────────────────────────────────────────────────────────────────────────────

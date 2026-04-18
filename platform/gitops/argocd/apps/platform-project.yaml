@@ -13,6 +13,7 @@ spec:
     - "https://github.com/techwizard-platformlab/AI-RentalApp-Ledger"
     - "https://istio-release.storage.googleapis.com/charts"
     - "https://prometheus-community.github.io/helm-charts"
+    - "https://kubernetes.github.io/ingress-nginx"
 
   destinations:
     - namespace: istio-system
@@ -20,6 +21,10 @@ spec:
     - namespace: istio-cni
       server: https://kubernetes.default.svc
     - namespace: monitoring
+      server: https://kubernetes.default.svc
+    - namespace: rental-dev
+      server: https://kubernetes.default.svc
+    - namespace: rental-qa
       server: https://kubernetes.default.svc
 
   # Platform add-ons need cluster-scoped resources (CRDs, ClusterRoles, etc.)

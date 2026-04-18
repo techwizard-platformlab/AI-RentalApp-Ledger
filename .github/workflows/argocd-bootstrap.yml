@@ -462,11 +462,92 @@ jobs:
           github.event.inputs.action == 'apply-addons' &&
           (github.event.inputs.addons == 'all' || github.event.inputs.addons == 'istio')
         run: |
+          # Wave 0 — CRDs
           kubectl apply -f platform/gitops/argocd/apps/istio-base-app.yaml
-          echo "Waiting 30s for istio-base CRDs to be established before istiod..."
-          sleep 30
+
+          echo "Waiting for istio-base CRDs to be established..."
+          for i in $(seq 1 24); do
+            CRD_COUNT=$(kubectl get crd 2>/dev/null | grep -c "istio.io" || true)
+            if [ "$CRD_COUNT" -ge 10 ]; then
+              echo "Istio CRDs ready ($CRD_COUNT found)"
+              break
+            fi
+            echo "Attempt $i/24 — $CRD_COUNT Istio CRDs found, waiting 15s..."
+            sleep 15
+          done
+
+          # Wave 1 — control plane
           kubectl apply -f platform/gitops/argocd/apps/istiod-app.yaml
-          echo "::notice::Istio Applications submitted to ArgoCD — monitor sync at https://20.85.34.239"
+
+          echo "Waiting for istiod to be ready..."
+          kubectl rollout status deployment/istiod \
+            -n istio-system --timeout=5m || true
+
+          # Wave 2 — ingress gateway
+          kubectl apply -f platform/gitops/argocd/apps/istio-gateway-app.yaml
+
+          echo "Waiting for Istio ingress gateway LoadBalancer IP..."
+          for i in $(seq 1 36); do
+            ISTIO_IP=$(kubectl get svc istio-ingressgateway \
+              -n istio-system \
+              -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+            [ -z "$ISTIO_IP" ] && ISTIO_IP=$(kubectl get svc istio-ingressgateway \
+              -n istio-system \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+            if [ -n "$ISTIO_IP" ]; then
+              echo "istio_ip=$ISTIO_IP" >> "$GITHUB_OUTPUT"
+              echo "Istio gateway: $ISTIO_IP"
+              break
+            fi
+            echo "Attempt $i/36 — waiting 10s..."
+            sleep 10
+          done
+
+          # Wave 3 — networking resources (VirtualServices, DestinationRules, etc.)
+          kubectl apply -f platform/gitops/argocd/apps/istio-networking-app.yaml
+
+          echo "::notice::Istio fully deployed — gateway IP: ${ISTIO_IP:-pending}"
+        id: istio_deploy
+
+      - name: Create Alertmanager config secret
+        if: |
+          github.event.inputs.action == 'apply-addons' &&
+          (github.event.inputs.addons == 'all' || github.event.inputs.addons == 'prometheus')
+        env:
+          DISCORD_WEBHOOK_SECRET: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          ENV_RG="my-Rental-App-${ENV^}"
+          KV_NAME=$(az keyvault list \
+            --resource-group "$ENV_RG" \
+            --query "[0].name" -o tsv)
+
+          if [ -n "$DISCORD_WEBHOOK_SECRET" ]; then
+            echo "::add-mask::$DISCORD_WEBHOOK_SECRET"
+            DISCORD_URL="$DISCORD_WEBHOOK_SECRET"
+          else
+            DISCORD_URL=$(az keyvault secret show --vault-name "$KV_NAME" \
+              --name "discord-webhook-url" --query value -o tsv 2>/dev/null || echo "")
+            [ -n "$DISCORD_URL" ] && echo "::add-mask::$DISCORD_URL"
+          fi
+
+          kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+
+          # Substitute env vars into alertmanager config and create secret
+          ALERTMANAGER_CONFIG=$(sed \
+            -e "s|\${DISCORD_WEBHOOK_URL}|${DISCORD_URL}|g" \
+            -e "s|\${ALERT_EMAIL_TO}|alerts@rentalapp.io|g" \
+            -e "s|\${SMTP_HOST}|smtp.example.com|g" \
+            -e "s|\${SMTP_USERNAME}|alerts@rentalapp.io|g" \
+            -e "s|\${SMTP_PASSWORD}|placeholder|g" \
+            platform/observability/monitoring/alertmanager-config.yaml)
+
+          kubectl create secret generic alertmanager-config-secret \
+            --namespace monitoring \
+            --from-literal=alertmanager.yaml="$ALERTMANAGER_CONFIG" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "Alertmanager config secret created."
 
       - name: Deploy Prometheus/Grafana via ArgoCD
         if: |
@@ -474,33 +555,52 @@ jobs:
           (github.event.inputs.addons == 'all' || github.event.inputs.addons == 'prometheus')
         run: |
           kubectl apply -f platform/gitops/argocd/apps/prometheus-app.yaml
-          echo "::notice::kube-prometheus-stack Application submitted to ArgoCD — sync takes ~3-5 minutes"
+          echo "::notice::kube-prometheus-stack submitted to ArgoCD — sync takes ~3-5 minutes"
 
       - name: Add-ons summary
         if: github.event.inputs.action == 'apply-addons'
         run: |
-          echo "## Platform Add-ons Deployed" >> "$GITHUB_STEP_SUMMARY"
+          ADDONS="${{ github.event.inputs.addons }}"
+          ISTIO_IP="${{ steps.istio_deploy.outputs.istio_ip }}"
+          ARGOCD_IP=$(kubectl get svc argocd-server -n "${{ env.NAMESPACE_ARGOCD }}" \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "unknown")
+
+          echo "## Platform Add-ons — ${{ github.event.inputs.environment }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Add-on | Status | Namespace |" >> "$GITHUB_STEP_SUMMARY"
           echo "|--------|--------|-----------|" >> "$GITHUB_STEP_SUMMARY"
-          ADDONS="${{ github.event.inputs.addons }}"
           if [[ "$ADDONS" == "all" || "$ADDONS" == "istio" ]]; then
-            echo "| Istio (base + istiod) | Syncing via ArgoCD | \`istio-system\` |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Istio base (CRDs) | Syncing via ArgoCD | \`istio-system\` |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| istiod (control plane) | Syncing via ArgoCD | \`istio-system\` |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Istio ingress gateway | Syncing via ArgoCD | \`istio-system\` |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Istio networking (VS/DR/AuthZ) | Syncing via ArgoCD | \`rental-dev\` |" >> "$GITHUB_STEP_SUMMARY"
           fi
           if [[ "$ADDONS" == "all" || "$ADDONS" == "prometheus" ]]; then
             echo "| Prometheus + Grafana + Alertmanager | Syncing via ArgoCD | \`monitoring\` |" >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### Access Grafana" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80" >> "$GITHUB_STEP_SUMMARY"
-          echo "# Open: http://localhost:3000  (admin / password from Key Vault: grafana-admin-password)" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "### Enable Istio Sidecar Injection (when ready)" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "kubectl label namespace rental-dev istio-injection=enabled --overwrite" >> "$GITHUB_STEP_SUMMARY"
-          echo "kubectl rollout restart deployment -n rental-dev" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$ADDONS" == "all" || "$ADDONS" == "istio" ]]; then
+            echo "### Istio Ingress Gateway" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Endpoint | URL |" >> "$GITHUB_STEP_SUMMARY"
+            echo "|----------|-----|" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Frontend | http://${ISTIO_IP:-pending}/ |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| API | http://${ISTIO_IP:-pending}/api/v1/ |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| ArgoCD UI | http://${ARGOCD_IP} |" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Restart pods to inject Istio sidecars" >> "$GITHUB_STEP_SUMMARY"
+            echo "\`\`\`bash" >> "$GITHUB_STEP_SUMMARY"
+            echo "kubectl rollout restart deployment -n rental-dev" >> "$GITHUB_STEP_SUMMARY"
+            echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [[ "$ADDONS" == "all" || "$ADDONS" == "prometheus" ]]; then
+            echo "### Access Grafana" >> "$GITHUB_STEP_SUMMARY"
+            echo "\`\`\`bash" >> "$GITHUB_STEP_SUMMARY"
+            echo "kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80" >> "$GITHUB_STEP_SUMMARY"
+            echo "# Open: http://localhost:3000  (admin / password from Key Vault: grafana-admin-password)" >> "$GITHUB_STEP_SUMMARY"
+            echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # ── Uninstall ───────────────────────────────────────────────────────────
       - name: Uninstall ArgoCD

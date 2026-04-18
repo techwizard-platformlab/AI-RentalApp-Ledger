@@ -5,16 +5,19 @@ metadata:
   namespace: rental-dev
 spec:
   hosts:
-    - rental-app.example.com
+    - "*"
     - api-gateway.rental-dev.svc.cluster.local
   gateways:
-    - rental-gateway     # external traffic via Istio Gateway
-    - mesh               # internal service-mesh traffic
+    - rental-gateway
+    - mesh
   http:
-    # Route all /api/* traffic through the api-gateway
     - match:
         - uri:
             prefix: /api/
+        - uri:
+            prefix: /admin/
+        - uri:
+            exact: /healthz
       route:
         - destination:
             host: api-gateway.rental-dev.svc.cluster.local
@@ -22,7 +25,7 @@ spec:
             port:
               number: 8000
           weight: 100
-        # Canary placeholder: split 90/10 when v2 is deployed
+        # Canary placeholder
         # - destination:
         #     host: api-gateway.rental-dev.svc.cluster.local
         #     subset: v2

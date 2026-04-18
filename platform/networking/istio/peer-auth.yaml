@@ -69,3 +69,31 @@ spec:
   portLevelMtls:
     8003:
       mode: PERMISSIVE
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: rag-api-health-permissive
+  namespace: rental-dev
+spec:
+  selector:
+    matchLabels:
+      app: rag-api
+  portLevelMtls:
+    8080:
+      mode: PERMISSIVE
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: frontend-health-permissive
+  namespace: rental-dev
+spec:
+  selector:
+    matchLabels:
+      app: rentalapp-frontend
+  portLevelMtls:
+    3000:
+      mode: PERMISSIVE

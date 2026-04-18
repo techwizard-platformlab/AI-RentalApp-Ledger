@@ -83,6 +83,48 @@ spec:
             paths: ["/notify/*", "/health"]
 
 ---
+# Allow: ingress gateway → frontend
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-ingress-to-frontend
+  namespace: rental-dev
+spec:
+  selector:
+    matchLabels:
+      app: rentalapp-frontend
+  rules:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account"
+      to:
+        - operation:
+            methods: [GET, POST]
+            paths: ["/*"]
+
+---
+# Allow: api-gateway → rag-api
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-api-gateway-to-rag-api
+  namespace: rental-dev
+spec:
+  selector:
+    matchLabels:
+      app: rag-api
+  rules:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/rental-dev/sa/api-gateway"
+      to:
+        - operation:
+            methods: [GET, POST]
+            paths: ["/query", "/health", "/stats"]
+
+---
 # Allow: Prometheus scraping metrics from all services
 apiVersion: security.istio.io/v1beta1
 kind: AuthorizationPolicy

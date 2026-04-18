@@ -1,0 +1,23 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: rag-api-vs
+  namespace: rental-dev
+spec:
+  hosts:
+    - rag-api.rental-dev.svc.cluster.local
+  gateways:
+    - mesh
+  http:
+    - route:
+        - destination:
+            host: rag-api.rental-dev.svc.cluster.local
+            subset: v1
+            port:
+              number: 8080
+          weight: 100
+      timeout: 60s
+      retries:
+        attempts: 2
+        perTryTimeout: 30s
+        retryOn: gateway-error,connect-failure
