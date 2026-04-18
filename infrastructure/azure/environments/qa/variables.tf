@@ -160,3 +160,17 @@ variable "budget_start_date" {
   description = "ISO 8601 start date for the budget period (e.g. 2026-04-01T00:00:00Z)."
   type        = string
 }
+
+# ── GitHub integration ────────────────────────────────────────────────────────
+
+variable "github_token" {
+  description = "GitHub PAT with repo scope to push secrets to the app repository."
+  type        = string
+  sensitive   = true
+}
+
+variable "app_github_repo" {
+  description = "Name of the application GitHub repository to push secrets to."
+  type        = string
+  default     = "RentalApp-Build"
+}

@@ -18,6 +18,10 @@ terraform {
       source  = "hashicorp/null"
       version = "~> 3.0"
     }
+    github = {
+      source  = "integrations/github"
+      version = "~> 6.0"
+    }
   }
 }
 
@@ -33,3 +37,8 @@ provider "azurerm" {
 }
 
 provider "azuread" {}
+
+provider "github" {
+  token = var.github_token
+  owner = "techwizard-platformlab"
+}

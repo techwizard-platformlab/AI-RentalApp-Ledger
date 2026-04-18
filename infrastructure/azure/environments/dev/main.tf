@@ -67,6 +67,19 @@ resource "azurerm_key_vault_secret" "acr_login_server" {
   depends_on   = [azurerm_role_assignment.github_kv_secrets_officer]
 }
 
+# Push ACR secrets to GitHub
+resource "github_actions_secret" "acr_login_server" {
+  repository      = var.app_github_repo
+  secret_name     = "ACR_LOGIN_SERVER"
+  plaintext_value = azurerm_container_registry.env.login_server
+}
+
+resource "github_actions_secret" "acr_name" {
+  repository      = var.app_github_repo
+  secret_name     = "ACR_NAME"
+  plaintext_value = azurerm_container_registry.env.name
+}
+
 # ── Networking ────────────────────────────────────────────────────────────────
 module "vnet" {
   source              = "../../modules/vnet"
