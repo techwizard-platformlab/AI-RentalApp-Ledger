@@ -182,8 +182,10 @@ jobs:
           DJANGO_SECRET_KEY=$(openssl rand -base64 64 | tr -d '/+=')
 
           # Store generated passwords in Key Vault for reference
+          ENV="${{ github.event.inputs.environment }}"
+          ENV_RG="my-Rental-App-${ENV^}"
           KV_NAME=$(az keyvault list \
-            --resource-group "${{ secrets.TF_BACKEND_RG }}" \
+            --resource-group "$ENV_RG" \
             --query "[0].name" -o tsv 2>/dev/null || echo "")
 
           if [ -n "$KV_NAME" ]; then
@@ -219,8 +221,10 @@ jobs:
           (github.event.inputs.db_mode == 'azure-sql' || github.event.inputs.db_mode == 'azure-pg' || github.event.inputs.db_mode == '')
         id: pg_kv
         run: |
+          ENV="${{ github.event.inputs.environment }}"
+          ENV_RG="my-Rental-App-${ENV^}"
           KV_NAME=$(az keyvault list \
-            --resource-group "${{ secrets.TF_BACKEND_RG }}" \
+            --resource-group "$ENV_RG" \
             --query "[0].name" -o tsv)
 
           fetch() { az keyvault secret show --vault-name "$KV_NAME" --name "$1" --query value -o tsv; }
@@ -381,8 +385,10 @@ jobs:
           github.event.inputs.action == 'apply-addons' &&
           (github.event.inputs.addons == 'all' || github.event.inputs.addons == 'prometheus')
         run: |
+          ENV="${{ github.event.inputs.environment }}"
+          ENV_RG="my-Rental-App-${ENV^}"
           KV_NAME=$(az keyvault list \
-            --resource-group "${{ secrets.TF_BACKEND_RG }}" \
+            --resource-group "$ENV_RG" \
             --query "[0].name" -o tsv)
 
           # Fetch Grafana password — auto-generate and store if not yet set
