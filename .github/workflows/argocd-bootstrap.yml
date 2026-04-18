@@ -232,58 +232,48 @@ jobs:
           echo "db_port=$(fetch db-port)"                     >> "$GITHUB_OUTPUT"
           echo "django_secret_key=$(fetch django-secret-key)" >> "$GITHUB_OUTPUT"
 
-      # ── Create K8s app secrets (all db_modes write same secret names) ────────
-      - name: Create app secrets
+      # ── Install External Secrets Operator via ArgoCD ─────────────────────────
+      # ESO pulls secrets from Azure Key Vault automatically — no manual kubectl
+      # create secret needed. The managed identity + federated credential were
+      # created by Terraform; we just wire the client ID here.
+      - name: Install External Secrets Operator
         if: github.event.inputs.action != 'uninstall'
         run: |
-          NS="${{ env.NAMESPACE_APP }}"
-          MODE="${{ github.event.inputs.db_mode }}"
-          MODE="${MODE:-azure-pg}"
+          ENV="${{ github.event.inputs.environment }}"
+          ENV_RG="my-Rental-App-${ENV^}"
+          LOCATION_SHORT="eus2"   # matches Terraform location_short var
 
-          if [ "$MODE" = "helm-pg" ]; then
-            DB_ENGINE="django.db.backends.postgresql"
-            DB_HOST="${{ steps.pg_helm.outputs.db_host }}"
-            DB_NAME="${{ steps.pg_helm.outputs.db_name }}"
-            DB_USER="${{ steps.pg_helm.outputs.db_user }}"
-            DB_PASS="${{ steps.pg_helm.outputs.db_password }}"
-            DB_PORT="${{ steps.pg_helm.outputs.db_port }}"
-            SECRET_KEY="${{ steps.pg_helm.outputs.django_secret_key }}"
-            DB_SSLMODE="disable"
-          elif [ "$MODE" = "azure-sql" ]; then
-            # Azure SQL Database (SQL Server/MSSQL)
-            DB_ENGINE="mssql"
-            DB_HOST="${{ steps.pg_kv.outputs.db_host }}"
-            DB_NAME="${{ steps.pg_kv.outputs.db_name }}"
-            DB_USER="${{ steps.pg_kv.outputs.db_user }}"
-            DB_PASS="${{ steps.pg_kv.outputs.db_password }}"
-            DB_PORT="1433"
-            SECRET_KEY="${{ steps.pg_kv.outputs.django_secret_key }}"
-            DB_SSLMODE="require"
-          else
-            # azure-pg (default) — Azure PostgreSQL Flexible Server
-            DB_ENGINE="django.db.backends.postgresql"
-            DB_HOST="${{ steps.pg_kv.outputs.db_host }}"
-            DB_NAME="${{ steps.pg_kv.outputs.db_name }}"
-            DB_USER="${{ steps.pg_kv.outputs.db_user }}"
-            DB_PASS="${{ steps.pg_kv.outputs.db_password }}"
-            DB_PORT="${{ steps.pg_kv.outputs.db_port }}"
-            SECRET_KEY="${{ steps.pg_kv.outputs.django_secret_key }}"
-            DB_SSLMODE="require"
-          fi
+          # Get ESO managed identity client ID created by Terraform
+          ESO_CLIENT_ID=$(az identity show \
+            --name "${ENV}-${LOCATION_SHORT}-eso-identity" \
+            --resource-group "$ENV_RG" \
+            --query clientId -o tsv)
 
-          for SVC in api-gateway rental-service ledger-service notification-service rag-api; do
-            kubectl create secret generic "${SVC}-secret" \
-              --namespace "$NS" \
-              --from-literal=SECRET_KEY="$SECRET_KEY" \
-              --from-literal=DB_ENGINE="$DB_ENGINE" \
-              --from-literal=DB_HOST="$DB_HOST" \
-              --from-literal=DB_NAME="$DB_NAME" \
-              --from-literal=DB_USER="$DB_USER" \
-              --from-literal=DB_PASSWORD="$DB_PASS" \
-              --from-literal=DB_PORT="$DB_PORT" \
-              --from-literal=DB_SSLMODE="$DB_SSLMODE" \
-              --dry-run=client -o yaml | kubectl apply -f -
-          done
+          echo "ESO client ID: $ESO_CLIENT_ID"
+
+          # Apply ArgoCD Application for ESO with real client ID substituted
+          sed "s/REPLACE_AFTER_TERRAFORM_APPLY/${ESO_CLIENT_ID}/" \
+            platform/gitops/argocd/apps/external-secrets-app.yaml \
+            | kubectl apply -f -
+
+          # Wait for ESO pods to be ready before applying ClusterSecretStore
+          echo "Waiting for ESO to be ready..."
+          kubectl rollout status deployment/external-secrets \
+            -n external-secrets --timeout=5m || true
+
+      # ── Apply ClusterSecretStore pointing at Key Vault ────────────────────────
+      - name: Apply ClusterSecretStore
+        if: github.event.inputs.action != 'uninstall'
+        run: |
+          kubectl apply -f \
+            platform/kubernetes/overlays/${{ github.event.inputs.environment }}/secrets/cluster-secret-store.yaml
+
+          # Verify the store can reach Key Vault
+          echo "Verifying ClusterSecretStore..."
+          sleep 10
+          kubectl get clustersecretstore azure-keyvault \
+            -o jsonpath='{.status.conditions[0].message}' || true
+          echo ""
 
       # ── Install / Upgrade ArgoCD via Helm ──────────────────────────────────
       - name: Add Argo Helm repo
