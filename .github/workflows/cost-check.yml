@@ -19,6 +19,7 @@ permissions:
 
 env:
   DISCORD_WEBHOOK_URL: ""         # populated at runtime from Key Vault (azure matrix only)
+  ARM_USE_AZUREAD_AUTH: "true"
 
 jobs:
   cost-check:

@@ -105,6 +105,7 @@ permissions:
 env:
   TF_VERSION: "1.5.7"
   DISCORD_WEBHOOK_URL: ""         # populated at runtime from Key Vault
+  ARM_USE_AZUREAD_AUTH: "true"    # use Azure AD auth for backend storage (no access key needed)
 
 jobs:
 
