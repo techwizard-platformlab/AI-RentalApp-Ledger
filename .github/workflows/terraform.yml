@@ -459,6 +459,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [setup, azure_plan]
     if: |
+      always() &&
       needs.setup.outputs.scheduled == 'false' &&
       needs.setup.outputs.run_azure == 'true' &&
       (needs.azure_plan.result == 'success' || needs.azure_plan.result == 'skipped') &&
@@ -811,6 +812,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [setup, gcp_plan]
     if: |
+      always() &&
       needs.setup.outputs.scheduled == 'false' &&
       needs.setup.outputs.run_gcp == 'true' &&
       (needs.gcp_plan.result == 'success' || needs.gcp_plan.result == 'skipped') &&
