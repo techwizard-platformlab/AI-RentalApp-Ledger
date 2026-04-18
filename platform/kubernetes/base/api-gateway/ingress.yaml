@@ -46,10 +46,17 @@ spec:
                 name: rag-api
                 port:
                   number: 8080
-          - path: /(.*)
+          - path: /api(/|$)(.*)
             pathType: ImplementationSpecific
             backend:
               service:
                 name: api-gateway
                 port:
                   number: 80
+          - path: /(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: rentalapp-frontend
+                port:
+                  number: 3000
