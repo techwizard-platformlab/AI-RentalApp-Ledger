@@ -1,5 +1,11 @@
 data "azurerm_client_config" "current" {}
 
+resource "random_string" "kv_suffix" {
+  length  = 4
+  upper   = false
+  special = false
+}
+
 # Key Vault — standard SKU.
 # NOTE: The permission model (RBAC vs access policy) CANNOT be changed
 # once the Key Vault is created — the platform blocks it with InsufficientPermissions.
@@ -8,7 +14,7 @@ data "azurerm_client_config" "current" {}
 # 400 error. Access policies are therefore not available; secrets must be written
 # by the Terraform SP (requires Key Vault Secrets Officer role), or manually via Azure Portal / az CLI.
 resource "azurerm_key_vault" "this" {
-  name                       = "${var.environment}-${var.location_short}-kv"
+  name                       = "${var.environment}-${var.location_short}-kv-${random_string.kv_suffix.result}"
   location                   = var.location
   resource_group_name        = var.resource_group_name
   tenant_id                  = data.azurerm_client_config.current.tenant_id
