@@ -322,7 +322,40 @@ bootstrap_azure() {
     "github-${GITHUB_REPO}-env-approval" \
     "repo:${GITHUB_ORG}/${GITHUB_REPO}:environment:terraform-destructive-approval"
 
-  # ── Step 7: Output GitHub Secrets ──────────────────────────────────────────
+  # ── Step 7: Grant MI permission to create role assignments ─────────────────
+  # Required for Terraform to assign AcrPush/AcrPull/KV roles during apply.
+  # Uses User Access Administrator scoped to subscription (idempotent).
+  blank
+  info "Granting User Access Administrator to MI: $IDENTITY_NAME"
+  local SUB_SCOPE="/subscriptions/$SUBSCRIPTION_ID"
+  local existing_uaa
+  existing_uaa=$(az role assignment list \
+    --assignee "$MI_PRINCIPAL_ID" \
+    --role "User Access Administrator" \
+    --scope "$SUB_SCOPE" \
+    --query "[].id" -o tsv 2>/dev/null || true)
+
+  if [[ -n "$existing_uaa" ]]; then
+    success "User Access Administrator already assigned — skipping"
+  else
+    if az role assignment create \
+        --role "User Access Administrator" \
+        --assignee-object-id "$MI_PRINCIPAL_ID" \
+        --assignee-principal-type ServicePrincipal \
+        --scope "$SUB_SCOPE" \
+        --output none 2>/dev/null; then
+      success "User Access Administrator granted to $IDENTITY_NAME"
+    else
+      warn "Could not assign User Access Administrator — run manually:"
+      echo "  az role assignment create \\"
+      echo "    --role \"User Access Administrator\" \\"
+      echo "    --assignee-object-id $MI_PRINCIPAL_ID \\"
+      echo "    --assignee-principal-type ServicePrincipal \\"
+      echo "    --scope $SUB_SCOPE"
+    fi
+  fi
+
+  # ── Step 8: Output GitHub Secrets ──────────────────────────────────────────
   blank
   echo -e "${BOLD}${GREEN}╔══════════════════════════════════════════════════════════════════════╗${RESET}"
   echo -e "${BOLD}${GREEN}║  GitHub → Settings → Secrets → Actions                              ║${RESET}"
