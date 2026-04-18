@@ -28,7 +28,7 @@ provider "azurerm" {
       recover_soft_deleted_key_vaults = true
     }
   }
-  subscription_id                 = var.subscription_id
+  # Auth via ARM_* env vars (ARM_SUBSCRIPTION_ID, ARM_CLIENT_ID, ARM_TENANT_ID, ARM_USE_OIDC)
   resource_provider_registrations = "none"
 }
 
