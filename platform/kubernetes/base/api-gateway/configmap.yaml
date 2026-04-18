@@ -8,7 +8,8 @@ metadata:
 data:
   # Overridden per environment via overlay patches
   LOG_LEVEL: "INFO"
-  DJANGO_SETTINGS_MODULE: "config.settings.base"
+  DJANGO_SETTINGS_MODULE: "config.settings"
+  ALLOWED_HOSTS: "api-gateway,api-gateway.rental-dev.svc.cluster.local,localhost,127.0.0.1"
   # DB connection — values injected from api-gateway-secret (Key Vault)
   DB_PORT: "5432"
   # Service discovery — patched per overlay with correct namespace

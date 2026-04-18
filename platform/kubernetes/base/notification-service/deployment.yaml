@@ -47,6 +47,15 @@ spec:
                 name: notification-service-config
             - secretRef:
                 name: notification-service-secret
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
           resources:
             requests:
               cpu: 50m

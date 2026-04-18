@@ -7,6 +7,8 @@ metadata:
     project: rentalAppLedger
 data:
   LOG_LEVEL: "INFO"
+  DJANGO_SETTINGS_MODULE: "config.settings"
+  ALLOWED_HOSTS: "notification-service,notification-service.rental-dev.svc.cluster.local,localhost,127.0.0.1"
   SERVICE_PORT: "8003"
   # Channel config — secrets (webhook URL, SMTP password) come from notification-service-secret
   EMAIL_BACKEND: "django.core.mail.backends.smtp.EmailBackend"
