@@ -282,6 +282,15 @@ jobs:
             echo "::add-mask::$DISCORD"
             echo "DISCORD_WEBHOOK_URL=$DISCORD" >> "$GITHUB_ENV"
           fi
+          
+          GH_PAT=$(az keyvault secret show --vault-name "$KV" --name "github-pat" --query value -o tsv 2>/dev/null || true)
+          if [[ -n "$GH_PAT" ]]; then
+            echo "::add-mask::$GH_PAT"
+            echo "TF_VAR_github_token=$GH_PAT" >> "$GITHUB_ENV"
+          else
+            echo "::error::Failed to fetch github-pat from Key Vault"
+            exit 1
+          fi
 
       - name: Terraform fmt check
         id: fmt
@@ -551,6 +560,15 @@ jobs:
           if [[ -n "$DISCORD" ]]; then
             echo "::add-mask::$DISCORD"
             echo "DISCORD_WEBHOOK_URL=$DISCORD" >> "$GITHUB_ENV"
+          fi
+          
+          GH_PAT=$(az keyvault secret show --vault-name "$KV" --name "github-pat" --query value -o tsv 2>/dev/null || true)
+          if [[ -n "$GH_PAT" ]]; then
+            echo "::add-mask::$GH_PAT"
+            echo "TF_VAR_github_token=$GH_PAT" >> "$GITHUB_ENV"
+          else
+            echo "::error::Failed to fetch github-pat from Key Vault"
+            exit 1
           fi
 
       - name: Terraform init
