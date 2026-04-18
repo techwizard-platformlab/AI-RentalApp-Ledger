@@ -11,6 +11,7 @@ resources:
   - ../../base/ledger-service
   - ../../base/notification-service
   - ../../base/rag-api
+  - ../../base/rentalapp-frontend
 
 # Apply environment label to all resources
 labels:
@@ -26,6 +27,9 @@ images:
     newTag: latest
   - name: rental-rag-api
     newName: deveus2acrzwtbhs.azurecr.io/rental-rag-api
+    newTag: latest
+  - name: rentalapp-frontend
+    newName: deveus2acrzwtbhs.azurecr.io/rentalapp-frontend
     newTag: latest
 
 # Env-specific patches — configmaps, resource tuning
@@ -59,6 +63,12 @@ patches:
     target:
       kind: ConfigMap
       name: rag-api-config
+
+  # ── rentalapp-frontend config ──────────────────────────────────────────────
+  - path: patches/rentalapp-frontend-config.yaml
+    target:
+      kind: ConfigMap
+      name: rentalapp-frontend-config
 
   # ── ingress: dev hostname ──────────────────────────────────────────────────
   - path: patches/ingress-dev.yaml

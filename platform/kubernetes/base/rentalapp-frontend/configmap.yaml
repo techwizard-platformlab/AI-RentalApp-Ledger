@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rentalapp-frontend-config
+  labels:
+    app: rentalapp-frontend
+    project: rentalAppLedger
+data:
+  # Kubernetes internal service DNS — stable, never changes even when LB IP changes.
+  # To point at a different backend: edit this value + kubectl rollout restart.
+  # Zero code changes. Zero Docker rebuilds.
+  BACKEND_URL: "http://rentalapp-api:8000"
+  NODE_ENV: "production"
+  PORT: "3000"

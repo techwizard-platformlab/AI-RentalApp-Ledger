@@ -10,6 +10,7 @@ resources:
   - ../../base/ledger-service
   - ../../base/notification-service
   - ../../base/rag-api
+  - ../../base/rentalapp-frontend
   - patches/pdb.yaml
 
 labels:
@@ -24,6 +25,9 @@ images:
     newTag: latest
   - name: rental-rag-api
     newName: placeholder.azurecr.io/rental-rag-api
+    newTag: latest
+  - name: rentalapp-frontend
+    newName: placeholder.azurecr.io/rentalapp-frontend
     newTag: latest
 
 patches:
@@ -53,6 +57,11 @@ patches:
       kind: ConfigMap
       name: rag-api-config
 
+  - path: patches/rentalapp-frontend-config.yaml
+    target:
+      kind: ConfigMap
+      name: rentalapp-frontend-config
+
   # ── QA: 2 replicas for all Django services ─────────────────────────────────
   - path: patches/replicas.yaml
     target:
@@ -68,6 +77,11 @@ patches:
     target:
       kind: Deployment
       name: ledger-service
+
+  - path: patches/replicas.yaml
+    target:
+      kind: Deployment
+      name: rentalapp-frontend
 
   # ── QA: higher resource limits ─────────────────────────────────────────────
   - path: patches/resources-api-gateway.yaml
