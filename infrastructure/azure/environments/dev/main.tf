@@ -135,6 +135,7 @@ module "postgresql" {
   aks_subnet_cidr     = var.subnet_cidrs["aks"]
   key_vault_id        = module.keyvault.id
   tags                = local.tags
+  depends_on          = [azurerm_role_assignment.github_kv_secrets_officer]
 }
 
 module "sql_database" {
@@ -150,6 +151,7 @@ module "sql_database" {
   aks_subnet_cidr     = var.subnet_cidrs["aks"]
   key_vault_name      = module.keyvault.name
   tags                = local.tags
+  depends_on          = [azurerm_role_assignment.github_kv_secrets_officer]
 }
 
 module "storage_account" {
