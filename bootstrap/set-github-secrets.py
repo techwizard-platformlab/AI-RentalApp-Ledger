@@ -25,11 +25,30 @@ Prerequisites:
 import argparse
 import base64
 import re
+import subprocess
 import sys
 import getpass
 import requests
 from pathlib import Path
 from nacl import encoding, public
+
+
+# ── Key Vault helper ──────────────────────────────────────────────────────────
+def kv_get_secret(vault_name: str, secret_name: str) -> str:
+    """Fetch a secret from Azure Key Vault via az CLI. Returns empty string on failure."""
+    if not vault_name:
+        return ""
+    try:
+        result = subprocess.run(
+            ["az", "keyvault", "secret", "show",
+             "--vault-name", vault_name,
+             "--name", secret_name,
+             "--query", "value", "-o", "tsv"],
+            capture_output=True, text=True, timeout=15,
+        )
+        return result.stdout.strip() if result.returncode == 0 else ""
+    except Exception:
+        return ""
 
 
 # ── .env loader ───────────────────────────────────────────────────────────────
@@ -172,14 +191,20 @@ def build_secret_maps(env: dict) -> tuple[dict, dict, dict, dict]:
     Returns (platform_secrets, build_secrets, platform_required, build_required).
     Empty values and placeholder strings are excluded — they will be skipped.
     """
-    client_id        = env.get("AZURE_CLIENT_ID",       "")
-    tenant_id        = env.get("AZURE_TENANT_ID",        "")
-    subscription_id  = env.get("AZURE_SUBSCRIPTION_ID",  "")
+    platform_rg      = env.get("PLATFORM_RG",            "techwizard-platformlab-apps")
+    platform_kv      = env.get("PLATFORM_KV_NAME",       "techwizard-plt-kv")
     shared_rg        = env.get("AZURE_SHARED_RG",        "my-Rental-App")
+    tf_backend_rg    = env.get("TF_BACKEND_RG",          platform_rg)
     tf_backend_sa    = env.get("TF_BACKEND_SA",          "")
     acr_name         = env.get("ACR_NAME",               "")
-    key_vault_name   = env.get("KEY_VAULT_NAME",         "")
-    discord_webhook  = env.get("DISCORD_WEBHOOK_URL",    "")
+
+    # Azure identifiers — fetch from Key Vault (not stored in .env)
+    client_id       = kv_get_secret(platform_kv, "azure-client-id")
+    tenant_id       = kv_get_secret(platform_kv, "azure-tenant-id")
+    subscription_id = kv_get_secret(platform_kv, "azure-subscription-id")
+
+    # NOTE: DISCORD_WEBHOOK_URL and ARGOCD_GITHUB_PAT are intentionally NOT pushed
+    # as GitHub Secrets — workflows fetch them directly from Key Vault at runtime.
     smtp_password    = env.get("SMTP_PASSWORD",          "")
     mail_to          = env.get("MAIL_TO",                "")
     groq_api_key     = env.get("GROQ_API_KEY",           "")
@@ -198,16 +223,11 @@ def build_secret_maps(env: dict) -> tuple[dict, dict, dict, dict]:
         "AZURE_CLIENT_ID":       client_id,
         "AZURE_TENANT_ID":       tenant_id,
         "AZURE_SUBSCRIPTION_ID": subscription_id,
-        # Terraform state backend
-        "TF_BACKEND_RG":         shared_rg,
+        # Terraform state backend (in techwizard-platformlab-apps)
+        "TF_BACKEND_RG":         tf_backend_rg,
         "TF_BACKEND_SA":         tf_backend_sa,
-        "TF_BACKEND_CONTAINER":  "tfstate",
-        # Shared permanent layer
-        "TF_SHARED_RG":          shared_rg,
-        "ACR_NAME":              acr_name,
-        "KEY_VAULT_NAME":        key_vault_name,
-        # Notifications (optional)
-        "DISCORD_WEBHOOK_URL":   discord_webhook,
+        # TF_BACKEND_CONTAINER computed per-env: rentalapp-<env>-tfstate
+        # Notifications (optional — DISCORD_WEBHOOK_URL fetched from KV at runtime)
         "SMTP_PASSWORD":         smtp_password,
         "MAIL_TO":               mail_to,
     }
@@ -232,10 +252,9 @@ def build_secret_maps(env: dict) -> tuple[dict, dict, dict, dict]:
     # Required (must be set before first pipeline run)
     platform_required = {
         "AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID",
-        "TF_BACKEND_SA", "TF_BACKEND_CONTAINER", "TF_BACKEND_RG", "TF_SHARED_RG",
+        "TF_BACKEND_SA", "TF_BACKEND_RG",
     }
-    # Required after shared Terraform run
-    platform_post_tf = {"ACR_NAME", "KEY_VAULT_NAME"}
+    platform_post_tf = set()
 
     build_required = {
         "AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID",
@@ -307,14 +326,28 @@ if __name__ == "__main__":
     platform_secrets, build_secrets, plat_req, plat_post_tf, build_req = \
         build_secret_maps(env)
 
-    # ── PAT (always needed) ───────────────────────────────────────────────────
+    # ── PAT: platform Key Vault → env var → interactive prompt ───────────────
     token = env.get("GITHUB_PAT", "").strip()
+
+    if not token:
+        # Try platform Key Vault first (shared across all apps)
+        kv_name = env.get("PLATFORM_KV_NAME", "").strip()
+        if kv_name and "<" not in kv_name:
+            print(f"Fetching GITHUB_PAT from platform Key Vault: {kv_name} ...")
+            token = kv_get_secret(kv_name, "github-pat")
+            if token:
+                print("  ✔  PAT loaded from Key Vault")
+            else:
+                print("  ⚠  PAT not found in Key Vault — falling back to interactive prompt")
+
     if not token:
         print("Enter your GitHub Personal Access Token (PAT)")
         print("  Scope required : repo  (classic token)")
         print("  Create one at  : https://github.com/settings/tokens/new")
+        print("  Store in KV    : bash bootstrap/store-secrets.sh")
         print()
         token = getpass.getpass("PAT: ").strip()
+
     if not token:
         print("ERROR: No token provided. Exiting.")
         sys.exit(1)

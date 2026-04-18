@@ -2,8 +2,7 @@
 # Variable sources:
 #   terraform.tfvars              → environment, location, networking, compute,
 #                                   db_engine, db sizing, budget
-#   GitHub Secret → TF_VAR_*     → env_resource_group_name, shared_resource_group_name,
-#                                   subscription_id, acr_name, github_actions_principal_id
+#   GitHub Secret → TF_VAR_*     → env_resource_group_name, github_actions_principal_id
 # =============================================================================
 
 variable "environment" {
@@ -43,20 +42,10 @@ variable "env_resource_group_name" {
   type        = string
 }
 
-variable "shared_resource_group_name" {
-  description = "Permanent shared resource group containing ACR — never destroyed."
+variable "acr_sku" {
+  description = "ACR SKU — Basic is sufficient for dev."
   type        = string
-}
-
-variable "subscription_id" {
-  description = "Azure subscription ID — injected via TF_VAR_subscription_id."
-  type        = string
-  sensitive   = true
-}
-
-variable "acr_name" {
-  description = "Shared ACR name (from infrastructure/azure/shared/ outputs) — injected via TF_VAR_acr_name."
-  type        = string
+  default     = "Basic"
 }
 
 variable "github_actions_principal_id" {

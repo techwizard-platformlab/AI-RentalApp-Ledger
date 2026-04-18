@@ -1,16 +1,14 @@
 # =============================================================================
-# Azure dev environment
-# Manages: AKS, VNet, Subnets, NSG, Load Balancer, Database, Storage, Key Vault
+# Azure dev environment — fully self-contained in my-Rental-App-Dev
+# Manages: ACR, AKS, VNet, NSG, Load Balancer, Database, Storage, Key Vault
+#
+# All resources live in my-Rental-App-Dev.
+# compute-only destroy: AKS, LB, NSG, subnet, VNet (ACR, DB, KV, Storage kept)
+# full destroy:         entire resource group
 #
 # Database engine — controlled by var.db_engine in terraform.tfvars:
-#   postgresql (default) → PostgreSQL Flexible Server (B_Standard_B1ms, ~$12/month)
-#   mssql                → Azure SQL Database (Basic, ~$5/month)
-# Only one module is deployed; the other has count = 0.
-#
-# Key Vault is env-specific — manages dev secrets only.
-# ACR is shared — referenced via data source; AcrPull granted to AKS here.
-#
-# Resource group: my-Rental-App-Dev (destroy-safe — shared RG untouched)
+#   postgresql (default) → PostgreSQL Flexible Server
+#   mssql                → Azure SQL Database
 # =============================================================================
 
 # ── Env resource group ────────────────────────────────────────────────────────
@@ -20,12 +18,27 @@ resource "azurerm_resource_group" "env" {
   tags     = local.tags
 }
 
-# ── Shared ACR reference ──────────────────────────────────────────────────────
-# Skipped when acr_name is empty (shared layer not yet applied).
-data "azurerm_container_registry" "shared" {
-  count               = local.acr_ready ? 1 : 0
-  name                = var.acr_name
-  resource_group_name = var.shared_resource_group_name
+# ── Container Registry — env-specific, persists across compute destroy ────────
+resource "random_string" "acr_suffix" {
+  length  = 6
+  upper   = false
+  special = false
+}
+
+resource "azurerm_container_registry" "env" {
+  name                = "${var.environment}${var.location_short}acr${random_string.acr_suffix.result}"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.env.name
+  sku                 = var.acr_sku
+  admin_enabled       = false
+  tags                = local.tags
+}
+
+# AcrPush — GitHub Actions CI/CD can push images to this registry
+resource "azurerm_role_assignment" "github_acr_push" {
+  scope                = azurerm_container_registry.env.id
+  role_definition_name = "AcrPush"
+  principal_id         = var.github_actions_principal_id
 }
 
 # ── Key Vault — env-specific secrets ─────────────────────────────────────────
@@ -46,11 +59,10 @@ resource "azurerm_role_assignment" "github_kv_secrets_officer" {
   depends_on           = [module.keyvault]
 }
 
-# Store shared ACR login server URL in env Key Vault for app consumption
+# Store ACR login server in Key Vault for app consumption
 resource "azurerm_key_vault_secret" "acr_login_server" {
-  count        = local.acr_ready ? 1 : 0
   name         = "acr-login-server"
-  value        = data.azurerm_container_registry.shared[0].login_server
+  value        = azurerm_container_registry.env.login_server
   key_vault_id = module.keyvault.id
   depends_on   = [azurerm_role_assignment.github_kv_secrets_officer]
 }
@@ -92,10 +104,9 @@ module "aks" {
   tags                = local.tags
 }
 
-# AcrPull — AKS pods can pull images from the shared registry
+# AcrPull — AKS pods can pull images from the env registry
 resource "azurerm_role_assignment" "aks_acr_pull" {
-  count                = local.acr_ready ? 1 : 0
-  scope                = data.azurerm_container_registry.shared[0].id
+  scope                = azurerm_container_registry.env.id
   role_definition_name = "AcrPull"
   principal_id         = module.aks.kubelet_identity_object_id
 }
@@ -110,8 +121,6 @@ module "load_balancer" {
 }
 
 # ── Data storage ──────────────────────────────────────────────────────────────
-# Exactly one database module is deployed, chosen by var.db_engine (terraform.tfvars).
-
 module "postgresql" {
   count  = var.db_engine == "postgresql" ? 1 : 0
   source = "../../modules/postgresql"

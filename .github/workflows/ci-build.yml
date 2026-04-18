@@ -29,6 +29,10 @@ on:
 permissions:
   contents: read
   security-events: write   # upload SARIF to GitHub Security tab
+  id-token: write           # required for Azure OIDC (Key Vault secret fetch)
+
+env:
+  DISCORD_WEBHOOK_URL: ""         # populated at runtime from Key Vault
 
 concurrency:
   group: platform-lint-${{ github.ref }}
@@ -54,6 +58,22 @@ jobs:
           sudo mv opa /usr/local/bin/
           opa version
 
+      - name: Azure login (OIDC)
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Fetch secrets from Key Vault
+        run: |
+          KV="techwizard-plt-kv"
+          DISCORD=$(az keyvault secret show --vault-name "$KV" --name "rentalapp-discord-webhook" --query value -o tsv 2>/dev/null || true)
+          if [[ -n "$DISCORD" ]]; then
+            echo "::add-mask::$DISCORD"
+            echo "DISCORD_WEBHOOK_URL=$DISCORD" >> "$GITHUB_ENV"
+          fi
+
       - name: Lint all Rego policies
         run: |
           find platform/security/policies -name "*.rego" | while read f; do
@@ -71,12 +91,10 @@ jobs:
           done
 
       - name: Notify Discord
-        if: always() && env.DISCORD_WEBHOOK != ''
-        env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        if: always() && env.DISCORD_WEBHOOK_URL != ''
         uses: sarisia/actions-status-discord@eb045afee445dc055c18d3d90bd0f244fd062708  # v1
         with:
-          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          webhook: ${{ env.DISCORD_WEBHOOK_URL }}
           status: ${{ job.status }}
           title: "Platform Lint — OPA Rego Lint"
 
@@ -92,6 +110,22 @@ jobs:
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Fetch secrets from Key Vault
+        run: |
+          KV="techwizard-plt-kv"
+          DISCORD=$(az keyvault secret show --vault-name "$KV" --name "rentalapp-discord-webhook" --query value -o tsv 2>/dev/null || true)
+          if [[ -n "$DISCORD" ]]; then
+            echo "::add-mask::$DISCORD"
+            echo "DISCORD_WEBHOOK_URL=$DISCORD" >> "$GITHUB_ENV"
+          fi
 
       - name: Run Trivy filesystem scan
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
@@ -111,11 +145,9 @@ jobs:
           sarif_file: trivy-results.sarif
 
       - name: Notify Discord
-        if: always() && env.DISCORD_WEBHOOK != ''
-        env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        if: always() && env.DISCORD_WEBHOOK_URL != ''
         uses: sarisia/actions-status-discord@eb045afee445dc055c18d3d90bd0f244fd062708  # v1
         with:
-          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          webhook: ${{ env.DISCORD_WEBHOOK_URL }}
           status: ${{ job.status }}
           title: "Platform Lint — Trivy Security Scan"

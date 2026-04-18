@@ -1,11 +1,8 @@
 # =============================================================================
 # Azure dev — non-secret environment config
 # Committed to git. Secrets injected by GitHub Actions as TF_VAR_* env vars:
-#   TF_VAR_subscription_id             → AZURE_SUBSCRIPTION_ID
-#   TF_VAR_env_resource_group_name     → resolved from setup job (my-Rental-App-Dev)
-#   TF_VAR_shared_resource_group_name  → TF_SHARED_RG
-#   TF_VAR_acr_name                    → ACR_NAME (from shared/ outputs)
-#   TF_VAR_github_actions_principal_id → AZURE_CLIENT_OBJECT_ID
+#   TF_VAR_env_resource_group_name     → hardcoded "my-Rental-App-Dev" in workflow
+#   TF_VAR_github_actions_principal_id → resolved from az identity show
 # =============================================================================
 
 # ── Environment identity ──────────────────────────────────────────────────────

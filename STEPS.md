@@ -27,75 +27,84 @@
 
 ## PHASE 1 — One-Time Bootstrap (Run Locally First)
 
-### Step 1 — Edit the bootstrap script
+> **Secret model**: secrets (PATs, webhooks) are stored in Azure Key Vault — never in files.
+> `bootstrap/.env` holds only non-secret identifiers (IDs, names, regions).
+
+### Step 1 — Fill in bootstrap/.env (identifiers only, no secrets)
 
 ```bash
-# Open bootstrap/bootstrap.sh and set your GitHub username/org:
-#   GITHUB_ORG="your-github-username"   ← change this line
+cp bootstrap/.env.example bootstrap/.env
+# Edit bootstrap/.env — set AZURE_SUBSCRIPTION_ID, AZURE_TENANT_ID,
+# AZURE_CLIENT_ID, AZURE_SHARED_RG, GITHUB_ORG, GITHUB_REPO, etc.
+# Do NOT add PATs or webhook URLs here — those go to Key Vault in Step 4.
 ```
 
-### Step 2 — Run the unified bootstrap script
+### Step 2 — Run the bootstrap script
 
 ```bash
-# Interactive menu — you choose the cloud at runtime:
+az login    # browser-based login, once per session
+
 bash bootstrap/bootstrap.sh
-
-# ┌──────────────────────────────────────────┐
-# │   rentalAppLedger — Bootstrap Wizard     │
-# └──────────────────────────────────────────┘
-#   Which cloud do you want to bootstrap?
-#
-#   1) Azure only  (AKS + ACR + KeyVault)
-#   2) GCP only    (GKE + Artifact Registry)
-#   3) Both        (Azure + GCP)
-#
-#   Enter choice [1/2/3]:
-
-# Non-interactive (CI / scripted):
-CLOUD=azure bash bootstrap/bootstrap.sh
-CLOUD=gcp   bash bootstrap/bootstrap.sh
-CLOUD=both  bash bootstrap/bootstrap.sh
+# → Creates Terraform state storage account in my-Rental-App
+# → Creates OIDC federated credentials on Managed Identity
+# → Prints the GitHub Secrets table at the end
 ```
 
-**Azure prerequisites** (needed only if you select 1 or 3):
-```bash
-az login
-az account set --subscription "<your-subscription-id>"
-```
-
-**GCP prerequisites** (needed only if you select 2 or 3):
+For GCP:
 ```bash
 gcloud auth login
 gcloud config set project <your-project-id>
+CLOUD=gcp bash bootstrap/bootstrap.sh
 ```
 
-The script creates and prints all GitHub Secrets at the end.
+### Step 3 — Push identifiers to GitHub Secrets
 
-### Step 3 — Add GitHub Secrets
+```bash
+pip install -r bootstrap/requirements.txt
+python bootstrap/set-github-secrets.py --dry-run   # preview first
+python bootstrap/set-github-secrets.py              # push to GitHub
+# → Prompts for GitHub PAT interactively (not read from any file)
+```
+
+### Step 4 — Provision shared layer (creates Key Vault + ACR)
 
 ```
-Go to: GitHub → Your Repo → Settings → Secrets and variables → Actions → New secret
+GitHub → Actions → Infra (terraform.yml)
+  cloud: azure | action: apply → Approve at "shared" gate
+  → Key Vault and ACR are created here
+```
 
-Required secrets (follow bootstrap/github-secrets.md for full list):
+After apply, update `bootstrap/.env` with the outputs:
+```bash
+terraform -chdir=infrastructure/azure/shared output -raw acr_name      # → ACR_NAME
+terraform -chdir=infrastructure/azure/shared output -raw key_vault_name # → KEY_VAULT_NAME
+# Edit bootstrap/.env: fill in ACR_NAME and KEY_VAULT_NAME
+```
 
-  Azure:
-    AZURE_CLIENT_ID          → from Step 1 output
-    AZURE_TENANT_ID          → from Step 1 output
-    AZURE_SUBSCRIPTION_ID    → from Step 1 output
+### Step 5 — Store secrets in Key Vault (run once)
 
-  GCP:
-    GCP_PROJECT_ID                    → your GCP project ID
-    GCP_WORKLOAD_IDENTITY_PROVIDER    → from Step 2 output
-    GCP_SERVICE_ACCOUNT               → from Step 2 output
+```bash
+bash bootstrap/store-secrets.sh
+# Prompts for each secret (input hidden, never written to disk):
+#   github-pat        → GitHub PAT with 'repo' scope
+#   argocd-github-pat → GitHub PAT for ArgoCD
+#   discord-webhook   → Discord channel webhook URL
+```
 
-  Notifications:
-    DISCORD_WEBHOOK_URL      → Discord server → Edit Channel → Integrations → Webhooks
-    SMTP_PASSWORD            → Gmail App Password (not login password)
-    MAIL_TO                  → recipient email address
+### Step 6 — Push secrets + ACR name to GitHub
 
-  Optional (for RAG/AI):
-    GROQ_API_KEY             → https://console.groq.com (free tier)
-    ANTHROPIC_API_KEY        → https://console.anthropic.com (Claude Haiku cheapest)
+```bash
+python bootstrap/set-github-secrets.py
+# → PAT is loaded automatically from Key Vault (no manual input needed)
+# → Pushes DISCORD_WEBHOOK_URL, ACR_NAME, ACR_LOGIN_SERVER, etc.
+```
+
+### Day-to-day: load secrets in a new terminal
+
+```bash
+source bootstrap/load-secrets.sh
+# Exports GITHUB_PAT, ARGOCD_GITHUB_PAT, DISCORD_WEBHOOK_URL into the shell
+# Memory only — cleared when the terminal closes. No files written.
 ```
 
 ---

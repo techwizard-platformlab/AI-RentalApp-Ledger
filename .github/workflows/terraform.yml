@@ -30,7 +30,6 @@ name: "Infra"
 # Setup (one-time)
 #   repo Settings → Environments → create "terraform-destructive-approval"
 #   → add yourself as required reviewer
-#   → Add GitHub Secret: TF_VAR_github_actions_principal_id (Azure SP Object ID)
 # =============================================================================
 
 on:
@@ -105,6 +104,7 @@ permissions:
 
 env:
   TF_VERSION: "1.5.7"
+  DISCORD_WEBHOOK_URL: ""         # populated at runtime from Key Vault
 
 jobs:
 
@@ -228,189 +228,6 @@ jobs:
           fi
 
   # ===========================================================================
-  # AZURE SHARED — Plan (ACR + Key Vault in my-Rental-App)
-  # Only runs on manual workflow_dispatch when cloud=azure or both.
-  # The shared layer is NOT affected by scheduled destroy/recreate.
-  # ===========================================================================
-  azure_shared_plan:
-    name: "Azure Shared Plan"
-    runs-on: ubuntu-latest
-    needs: setup
-    if: |
-      needs.setup.outputs.run_azure == 'true' &&
-      needs.setup.outputs.scheduled == 'false' &&
-      needs.setup.outputs.action != 'destroy'
-
-    outputs:
-      has_destroys:  ${{ steps.check_destroys.outputs.has_destroys }}
-      destroy_count: ${{ steps.check_destroys.outputs.destroy_count }}
-
-    defaults:
-      run:
-        working-directory: infrastructure/azure/shared
-
-    env:
-      ARM_USE_OIDC:        "true"
-      ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
-      ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
-      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_subscription_id:              ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_shared_resource_group_name:   ${{ secrets.TF_SHARED_RG }}
-      TF_VAR_github_actions_principal_id:  ${{ secrets.TF_GITHUB_ACTIONS_PRINCIPAL_ID }}
-
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-          terraform_wrapper: true
-
-      - name: Azure OIDC login
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2
-        with:
-          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Terraform fmt check
-        run: terraform fmt -check
-        continue-on-error: true
-
-      - name: Terraform init
-        run: |
-          terraform init \
-            -backend-config="resource_group_name=${{ secrets.TF_BACKEND_RG }}" \
-            -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
-            -backend-config="container_name=${{ secrets.TF_BACKEND_CONTAINER }}"
-
-      - name: Terraform validate
-        run: terraform validate
-
-      - name: Terraform plan
-        id: plan
-        run: set -o pipefail; terraform plan -out=tfplan.binary -no-color 2>&1 | tee plan.txt
-
-      - name: Convert plan to JSON
-        run: terraform show -json tfplan.binary > tfplan.json
-
-      - name: Detect destructive changes
-        id: check_destroys
-        run: |
-          DESTROY_COUNT=$(jq '[.resource_changes[] | select(.change.actions | contains(["delete"]))] | length' tfplan.json)
-          echo "destroy_count=$DESTROY_COUNT" >> $GITHUB_OUTPUT
-          if [ "$DESTROY_COUNT" -gt 0 ]; then
-            echo "has_destroys=true" >> $GITHUB_OUTPUT
-            echo "::warning::⚠️ $DESTROY_COUNT shared resource(s) will be DESTROYED — approval required"
-          else
-            echo "has_destroys=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Upload shared plan artifact
-        if: needs.setup.outputs.action == 'apply' && steps.plan.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan-azure-shared-${{ github.run_id }}
-          path: infrastructure/azure/shared/tfplan.binary
-          retention-days: 1
-
-      - name: Job summary
-        if: always()
-        run: |
-          echo "### Azure Shared — Plan (ACR)" >> $GITHUB_STEP_SUMMARY
-          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| RG | ${{ secrets.TF_SHARED_RG }} (my-Rental-App) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Destroys | ${{ steps.check_destroys.outputs.destroy_count || '0' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Plan | ${{ steps.plan.outcome }} |" >> $GITHUB_STEP_SUMMARY
-
-  # ===========================================================================
-  # AZURE SHARED — Apply (gate via "shared" environment)
-  # Requires manual approval before modifying ACR or Key Vault.
-  # ===========================================================================
-  azure_shared_apply:
-    name: "Azure Shared Apply"
-    runs-on: ubuntu-latest
-    needs: [setup, azure_shared_plan]
-    if: |
-      always() &&
-      needs.setup.outputs.run_azure == 'true' &&
-      needs.setup.outputs.scheduled == 'false' &&
-      needs.setup.outputs.action == 'apply' &&
-      needs.azure_shared_plan.result == 'success'
-    environment: shared
-
-    defaults:
-      run:
-        working-directory: infrastructure/azure/shared
-
-    env:
-      ARM_USE_OIDC:        "true"
-      ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
-      ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
-      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_subscription_id:              ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_shared_resource_group_name:   ${{ secrets.TF_SHARED_RG }}
-      TF_VAR_github_actions_principal_id:  ${{ secrets.TF_GITHUB_ACTIONS_PRINCIPAL_ID }}
-
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-          terraform_wrapper: true
-
-      - name: Azure OIDC login
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2
-        with:
-          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Terraform init
-        run: |
-          terraform init \
-            -backend-config="resource_group_name=${{ secrets.TF_BACKEND_RG }}" \
-            -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
-            -backend-config="container_name=${{ secrets.TF_BACKEND_CONTAINER }}"
-
-      - name: Download approved plan
-        uses: actions/download-artifact@v4
-        with:
-          name: tfplan-azure-shared-${{ github.run_id }}
-          path: infrastructure/azure/shared
-
-      - name: Terraform apply
-        id: apply
-        run: terraform apply -no-color tfplan.binary
-
-      - name: Capture outputs (ACR name)
-        id: tf_outputs
-        if: steps.apply.outcome == 'success'
-        run: |
-          ACR_NAME=$(terraform output -raw acr_name 2>/dev/null || echo "")
-          echo "acr_name=$ACR_NAME" >> $GITHUB_OUTPUT
-          echo "### Shared outputs" >> $GITHUB_STEP_SUMMARY
-          echo "| Resource | Name |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|------|" >> $GITHUB_STEP_SUMMARY
-          echo "| ACR | \`$ACR_NAME\` |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> Update GitHub Secret **ACR_NAME** with the value above." >> $GITHUB_STEP_SUMMARY
-
-      - name: Job summary
-        if: always()
-        run: |
-          echo "### Azure Shared — Apply" >> $GITHUB_STEP_SUMMARY
-          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| RG | my-Rental-App (permanent) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Apply | ${{ steps.apply.outcome }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Actor | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
-
-  # ===========================================================================
   # AZURE — Plan
   # Runs terraform plan, detects destroys, uploads plan binary as artifact.
   # Skipped entirely when action=destroy (no plan needed before destroy).
@@ -437,10 +254,7 @@ jobs:
       ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_subscription_id:              ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_env_resource_group_name:      ${{ needs.setup.outputs.env_rg }}
-      TF_VAR_shared_resource_group_name:   ${{ secrets.TF_SHARED_RG }}
-      TF_VAR_acr_name:                     ${{ secrets.ACR_NAME }}
       TF_VAR_github_actions_principal_id:  ${{ secrets.TF_GITHUB_ACTIONS_PRINCIPAL_ID }}
 
     steps:
@@ -459,6 +273,15 @@ jobs:
           tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Fetch secrets from Key Vault
+        run: |
+          KV="techwizard-plt-kv"
+          DISCORD=$(az keyvault secret show --vault-name "$KV" --name "rentalapp-discord-webhook" --query value -o tsv 2>/dev/null || true)
+          if [[ -n "$DISCORD" ]]; then
+            echo "::add-mask::$DISCORD"
+            echo "DISCORD_WEBHOOK_URL=$DISCORD" >> "$GITHUB_ENV"
+          fi
+
       - name: Terraform fmt check
         id: fmt
         run: terraform fmt -check -recursive ../../..
@@ -467,10 +290,11 @@ jobs:
       - name: Terraform init
         id: init
         run: |
+          CONTAINER="rentalapp-${{ needs.setup.outputs.env }}-tfstate"
           terraform init \
             -backend-config="resource_group_name=${{ secrets.TF_BACKEND_RG }}" \
             -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
-            -backend-config="container_name=${{ secrets.TF_BACKEND_CONTAINER }}"
+            -backend-config="container_name=${CONTAINER}"
 
       - name: Terraform validate
         id: validate
@@ -599,12 +423,10 @@ jobs:
           echo "| Actor | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
 
       - name: Notify Discord
-        if: always() && env.DISCORD_WEBHOOK != ''
-        env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        if: always() && env.DISCORD_WEBHOOK_URL != ''
         uses: sarisia/actions-status-discord@eb045afee445dc055c18d3d90bd0f244fd062708  # v1
         with:
-          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          webhook: ${{ env.DISCORD_WEBHOOK_URL }}
           status: ${{ job.status }}
           title: "Azure ${{ needs.setup.outputs.env }} — Plan (OPA: ${{ steps.opa_cost.outputs.exit_code == '0' && 'OK' || 'WARN' }})"
 
@@ -702,10 +524,7 @@ jobs:
       ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_subscription_id:              ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_env_resource_group_name:      ${{ needs.setup.outputs.env_rg }}
-      TF_VAR_shared_resource_group_name:   ${{ secrets.TF_SHARED_RG }}
-      TF_VAR_acr_name:                     ${{ secrets.ACR_NAME }}
       TF_VAR_github_actions_principal_id:  ${{ secrets.TF_GITHUB_ACTIONS_PRINCIPAL_ID }}
 
     steps:
@@ -724,12 +543,22 @@ jobs:
           tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Fetch secrets from Key Vault
+        run: |
+          KV="techwizard-plt-kv"
+          DISCORD=$(az keyvault secret show --vault-name "$KV" --name "rentalapp-discord-webhook" --query value -o tsv 2>/dev/null || true)
+          if [[ -n "$DISCORD" ]]; then
+            echo "::add-mask::$DISCORD"
+            echo "DISCORD_WEBHOOK_URL=$DISCORD" >> "$GITHUB_ENV"
+          fi
+
       - name: Terraform init
         run: |
+          CONTAINER="rentalapp-${{ needs.setup.outputs.env }}-tfstate"
           terraform init \
             -backend-config="resource_group_name=${{ secrets.TF_BACKEND_RG }}" \
             -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
-            -backend-config="container_name=${{ secrets.TF_BACKEND_CONTAINER }}"
+            -backend-config="container_name=${CONTAINER}"
 
       - name: Download approved plan
         if: needs.setup.outputs.action == 'apply'
@@ -764,9 +593,9 @@ jobs:
         run: terraform destroy -auto-approve -no-color
 
       - name: Notify Discord
-        if: always() && env.DISCORD_WEBHOOK != ''
+        if: always() && env.DISCORD_WEBHOOK_URL != ''
         env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_WEBHOOK: ${{ env.DISCORD_WEBHOOK_URL }}
         uses: Ilshidur/action-discord@d2594079a10f1d6739ee50a2471f0ca57418b554
         with:
           args: |
@@ -940,12 +769,10 @@ jobs:
           echo "| Actor | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
 
       - name: Notify Discord
-        if: always() && env.DISCORD_WEBHOOK != ''
-        env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        if: always() && env.DISCORD_WEBHOOK_URL != ''
         uses: sarisia/actions-status-discord@eb045afee445dc055c18d3d90bd0f244fd062708  # v1
         with:
-          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          webhook: ${{ env.DISCORD_WEBHOOK_URL }}
           status: ${{ job.status }}
           title: "GCP ${{ needs.setup.outputs.env }} — Plan (OPA: ${{ steps.opa_cost.outputs.exit_code == '0' && 'OK' || 'WARN' }})"
 
@@ -1083,9 +910,9 @@ jobs:
         run: terraform destroy -auto-approve -no-color
 
       - name: Notify Discord
-        if: always() && env.DISCORD_WEBHOOK != ''
+        if: always() && env.DISCORD_WEBHOOK_URL != ''
         env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_WEBHOOK: ${{ env.DISCORD_WEBHOOK_URL }}
         uses: Ilshidur/action-discord@d2594079a10f1d6739ee50a2471f0ca57418b554
         with:
           args: |

@@ -83,10 +83,6 @@ debug_env() {
   echo    "  CLOUD                 = ${CLOUD:-<not set>}"
   echo    "  GITHUB_ORG            = ${GITHUB_ORG:-<not set>}"
   echo    "  GITHUB_REPO           = ${GITHUB_REPO:-<not set>}"
-  echo    "  AZURE_SUBSCRIPTION_ID = ${AZURE_SUBSCRIPTION_ID:-<not set>}"
-  echo    "  AZURE_TENANT_ID       = ${AZURE_TENANT_ID:-<not set>}"
-  echo    "  AZURE_CLIENT_ID       = ${AZURE_CLIENT_ID:-<not set>}"
-  echo    "  AZURE_SHARED_RG       = ${AZURE_SHARED_RG:-<not set>}"
   echo    "  AZURE_IDENTITY_NAME   = ${AZURE_IDENTITY_NAME:-<not set>}"
   echo    "  AZURE_LOCATION        = ${AZURE_LOCATION:-<not set>}"
   blank
@@ -130,7 +126,7 @@ select_cloud() {
 # AZURE BOOTSTRAP
 #
 # Uses a User-Assigned Managed Identity for GitHub Actions OIDC auth.
-# The MI must already exist in the shared resource group (my-Rental-App).
+# The MI must already exist in the platform resource group (techwizard-platformlab-apps).
 # This script adds federated credentials to it and sets up Terraform state.
 # =============================================================================
 bootstrap_azure() {
@@ -138,23 +134,24 @@ bootstrap_azure() {
 
   # ── Validate required .env variables ───────────────────────────────────────
   local failed=0
-  require AZURE_SUBSCRIPTION_ID || failed=1
-  require AZURE_TENANT_ID       || failed=1
-  require AZURE_CLIENT_ID       || failed=1
-  require AZURE_SHARED_RG       || failed=1
-  require AZURE_IDENTITY_NAME   || failed=1
-  require AZURE_LOCATION        || failed=1
-  require GITHUB_ORG            || failed=1
-  require GITHUB_REPO           || failed=1
+  require AZURE_LOCATION  || failed=1
+  require GITHUB_ORG      || failed=1
+  require GITHUB_REPO     || failed=1
+  local PLATFORM_RG_VAL="${PLATFORM_RG:-techwizard-platformlab-apps}"
+  local IDENTITY_NAME="${PLATFORM_MI_NAME:-${AZURE_IDENTITY_NAME:-automation}}"
   [[ "$failed" -eq 0 ]] || { blank; echo "  Fix the above in bootstrap/.env and re-run."; exit 1; }
 
-  local SHARED_RG="$AZURE_SHARED_RG"
   local LOCATION="$AZURE_LOCATION"
-  local CLIENT_ID="$AZURE_CLIENT_ID"
-  local IDENTITY_NAME="$AZURE_IDENTITY_NAME"
-  local SUBSCRIPTION_ID="$AZURE_SUBSCRIPTION_ID"
-  local TENANT_ID="$AZURE_TENANT_ID"
   local CONTAINER_NAME="tfstate"
+
+  # ── Resolve Azure identifiers from active session (not from .env) ───────────
+  local SUBSCRIPTION_ID TENANT_ID CLIENT_ID
+  SUBSCRIPTION_ID=$(az account show --query id        -o tsv 2>/dev/null || true)
+  TENANT_ID=$(      az account show --query tenantId  -o tsv 2>/dev/null || true)
+  CLIENT_ID=$(      az identity show \
+                      --name "$IDENTITY_NAME" \
+                      --resource-group "$PLATFORM_RG_VAL" \
+                      --query clientId -o tsv 2>/dev/null || true)
 
   # ── Step 1: Verify az login + ARM token ────────────────────────────────────
   info "Checking Azure login and ARM token..."
@@ -186,98 +183,97 @@ bootstrap_azure() {
   ACTIVE_ACCOUNT=$(az account show --query user.name -o tsv 2>/dev/null || true)
   success "Logged in as: ${ACTIVE_ACCOUNT:-<unknown>}"
 
-  # Resolve tenant GUID from session (handles domain or GUID input in .env)
-  local SESSION_TENANT
-  SESSION_TENANT=$(az account show --query tenantId -o tsv 2>/dev/null || true)
-  [[ -n "$SESSION_TENANT" ]] && TENANT_ID="$SESSION_TENANT"
-
-  # ── Step 2: Verify shared resource group exists ────────────────────────────
-  info "Verifying shared resource group: $SHARED_RG"
-  if ! az group show --name "$SHARED_RG" --output none 2>/dev/null; then
-    error "Resource group '$SHARED_RG' not found."
+  # ── Step 2: Verify platform resource group exists ──────────────────────────
+  info "Verifying platform resource group: $PLATFORM_RG_VAL"
+  if ! az group show --name "$PLATFORM_RG_VAL" --output none 2>/dev/null; then
+    error "Resource group '$PLATFORM_RG_VAL' not found."
     echo  "  Create it first (one-time, permanent):"
-    echo  "    az group create --name $SHARED_RG --location $LOCATION"
+    echo  "    az group create --name $PLATFORM_RG_VAL --location $LOCATION"
     exit 1
   fi
-  success "Shared resource group confirmed: $SHARED_RG"
+  success "Platform resource group confirmed: $PLATFORM_RG_VAL"
 
-  # ── Step 3: Verify Managed Identity exists ─────────────────────────────────
-  info "Verifying Managed Identity: $IDENTITY_NAME"
+  # ── Step 3: Verify Managed Identity exists (in PLATFORM_RG) ─────────────────
+  info "Verifying Managed Identity: $IDENTITY_NAME (in $PLATFORM_RG_VAL)"
   local MI_RESOURCE_ID
   MI_RESOURCE_ID=$(az identity show \
     --name "$IDENTITY_NAME" \
-    --resource-group "$SHARED_RG" \
+    --resource-group "$PLATFORM_RG_VAL" \
     --query id -o tsv 2>/dev/null || true)
 
   if [[ -z "$MI_RESOURCE_ID" ]]; then
-    info "Managed Identity not found — creating: $IDENTITY_NAME"
-    az identity create \
-      --name "$IDENTITY_NAME" \
-      --resource-group "$SHARED_RG" \
-      --location "$LOCATION" \
-      --output none
-    MI_RESOURCE_ID=$(az identity show \
-      --name "$IDENTITY_NAME" \
-      --resource-group "$SHARED_RG" \
-      --query id -o tsv)
-    success "Managed Identity created: $IDENTITY_NAME"
-  else
-    success "Managed Identity confirmed: $IDENTITY_NAME"
+    warn "Managed Identity '$IDENTITY_NAME' not found in '$PLATFORM_RG_VAL'."
+    warn "Since the platform RG is shared across all apps, create it manually:"
+    echo "  az identity create --name $IDENTITY_NAME --resource-group $PLATFORM_RG_VAL --location $LOCATION"
+    exit 1
   fi
+  success "Managed Identity confirmed: $IDENTITY_NAME (in $PLATFORM_RG_VAL)"
 
   # Resolve the MI principal ID (for role assignments later if needed)
   local MI_PRINCIPAL_ID
   MI_PRINCIPAL_ID=$(az identity show \
     --name "$IDENTITY_NAME" \
-    --resource-group "$SHARED_RG" \
+    --resource-group "$PLATFORM_RG_VAL" \
     --query principalId -o tsv 2>/dev/null || true)
 
-  # ── Step 4: Create Terraform state Storage Account (idempotent) ─────────────
-  info "Checking for Terraform state storage account in: $SHARED_RG"
+  # ── Step 4: Locate shared Terraform state Storage Account ───────────────────
+  # Shared SA: techwizardappstfstate (in techwizard-platformlab-apps)
+  # Containers: rentalapp-<env>-tfstate (one per app+env, isolated)
+  local STATE_RG="$PLATFORM_RG_VAL"
+  info "Locating Terraform state storage account in: $STATE_RG"
 
   local SA_NAME
   SA_NAME=$(az storage account list \
-    --resource-group "$SHARED_RG" \
-    --query "[?starts_with(name,'rentalledgertf')].name" \
+    --resource-group "$STATE_RG" \
+    --query "[?starts_with(name,'techwizardapps')].name" \
     -o tsv 2>/dev/null | head -1 || true)
 
-  if [[ -n "$SA_NAME" ]]; then
-    success "Storage account already exists: $SA_NAME (skipping create)"
-  else
-    local SA_SUFFIX
-    SA_SUFFIX=$(openssl rand -hex 4 2>/dev/null || date +%s | tail -c 8)
-    SA_NAME="rentalledgertf${SA_SUFFIX}"
-
-    info "Creating Storage Account: $SA_NAME"
-    az storage account create \
-      --name                    "$SA_NAME" \
-      --resource-group          "$SHARED_RG" \
-      --location                "$LOCATION" \
-      --sku                     Standard_LRS \
-      --kind                    StorageV2 \
-      --https-only              true \
-      --allow-blob-public-access false \
-      --min-tls-version         TLS1_2 \
-      --output none
-    success "Storage account created: $SA_NAME"
+  if [[ -z "$SA_NAME" ]]; then
+    # Fallback: look for legacy twztfstate prefix
+    SA_NAME=$(az storage account list \
+      --resource-group "$STATE_RG" \
+      --query "[?starts_with(name,'twztfstate')].name" \
+      -o tsv 2>/dev/null | head -1 || true)
   fi
 
-  # ── Step 5: Create blob container (idempotent) ──────────────────────────────
-  info "Ensuring blob container exists: $CONTAINER_NAME"
-
-  if az storage container create \
-      --name         "$CONTAINER_NAME" \
-      --account-name "$SA_NAME" \
-      --auth-mode    login \
-      --output none 2>/dev/null; then
-    success "Blob container ready: $CONTAINER_NAME"
-  else
-    az storage container create \
-      --name         "$CONTAINER_NAME" \
-      --account-name "$SA_NAME" \
-      --output none
-    success "Blob container ready (key auth): $CONTAINER_NAME"
+  if [[ -z "$SA_NAME" ]]; then
+    warn "No shared storage account found in '$STATE_RG'."
+    warn "Create it manually:"
+    echo "  az storage account create --name techwizardappstfstate \\"
+    echo "    --resource-group $STATE_RG --location $LOCATION \\"
+    echo "    --sku Standard_LRS --kind StorageV2 --https-only true \\"
+    echo "    --allow-blob-public-access false --min-tls-version TLS1_2"
+    exit 1
   fi
+  success "Storage account found: $SA_NAME"
+
+  # ── Step 5: Create per-env blob containers (idempotent) ─────────────────────
+  # Pattern: rentalapp-<env>-tfstate  (one container per app+env)
+  info "Ensuring blob containers exist for: $GITHUB_REPO"
+
+  _ensure_container() {
+    local cname="$1"
+    if az storage container create \
+        --name         "$cname" \
+        --account-name "$SA_NAME" \
+        --auth-mode    login \
+        --output none 2>/dev/null; then
+      success "Container ready: $cname"
+    else
+      az storage container create \
+        --name         "$cname" \
+        --account-name "$SA_NAME" \
+        --output none 2>/dev/null && success "Container ready: $cname" || \
+        warn "Could not create container '$cname' — may already exist or need Storage Blob Data Contributor role"
+    fi
+  }
+
+  _ensure_container "rentalapp-dev-tfstate"
+  _ensure_container "rentalapp-qa-tfstate"
+
+  info "Container layout:"
+  info "  rentalapp-dev-tfstate  → infrastructure/azure/environments/dev"
+  info "  rentalapp-qa-tfstate   → infrastructure/azure/environments/qa"
 
   # ── Step 6: OIDC federated credentials on Managed Identity ─────────────────
   blank
@@ -290,7 +286,7 @@ bootstrap_azure() {
     local existing
     existing=$(az identity federated-credential list \
       --identity-name "$IDENTITY_NAME" \
-      --resource-group "$SHARED_RG" \
+      --resource-group "$PLATFORM_RG_VAL" \
       --query "[?name=='${fc_name}'].name" \
       -o tsv 2>/dev/null || true)
 
@@ -302,7 +298,7 @@ bootstrap_azure() {
     local err_output
     if err_output=$(az identity federated-credential create \
         --identity-name   "$IDENTITY_NAME" \
-        --resource-group  "$SHARED_RG" \
+        --resource-group  "$PLATFORM_RG_VAL" \
         --name            "$fc_name" \
         --issuer          "https://token.actions.githubusercontent.com" \
         --subject         "$subject" \
@@ -315,19 +311,15 @@ bootstrap_azure() {
   }
 
   _add_federated_credential \
-    "github-main" \
+    "github-${GITHUB_REPO}-main" \
     "repo:${GITHUB_ORG}/${GITHUB_REPO}:ref:refs/heads/main"
 
   _add_federated_credential \
-    "github-pr" \
+    "github-${GITHUB_REPO}-pr" \
     "repo:${GITHUB_ORG}/${GITHUB_REPO}:pull_request"
 
   _add_federated_credential \
-    "github-env-shared" \
-    "repo:${GITHUB_ORG}/${GITHUB_REPO}:environment:shared"
-
-  _add_federated_credential \
-    "github-env-terraform-destructive-approval" \
+    "github-${GITHUB_REPO}-env-approval" \
     "repo:${GITHUB_ORG}/${GITHUB_REPO}:environment:terraform-destructive-approval"
 
   # ── Step 7: Output GitHub Secrets ──────────────────────────────────────────
@@ -336,23 +328,21 @@ bootstrap_azure() {
   echo -e "${BOLD}${GREEN}║  GitHub → Settings → Secrets → Actions                              ║${RESET}"
   echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════════════════════════════════╝${RESET}"
   blank
-  echo -e "  ${BOLD}AZURE_CLIENT_ID${RESET}        = $CLIENT_ID"
-  echo -e "  ${BOLD}AZURE_TENANT_ID${RESET}        = $TENANT_ID"
-  echo -e "  ${BOLD}AZURE_SUBSCRIPTION_ID${RESET}  = $SUBSCRIPTION_ID"
-  echo -e "  ${BOLD}TF_SHARED_RG${RESET}           = $SHARED_RG"
-  echo -e "  ${BOLD}TF_BACKEND_SA${RESET}          = $SA_NAME"
-  echo -e "  ${BOLD}TF_BACKEND_CONTAINER${RESET}   = $CONTAINER_NAME"
+  echo -e "  ${BOLD}AZURE_CLIENT_ID${RESET}                      = $CLIENT_ID"
+  echo -e "  ${BOLD}AZURE_TENANT_ID${RESET}                      = $TENANT_ID"
+  echo -e "  ${BOLD}AZURE_SUBSCRIPTION_ID${RESET}                = $SUBSCRIPTION_ID"
+  echo -e "  ${BOLD}TF_BACKEND_RG${RESET}                        = $STATE_RG"
+  echo -e "  ${BOLD}TF_BACKEND_SA${RESET}                        = $SA_NAME"
+  echo -e "  ${BOLD}TF_GITHUB_ACTIONS_PRINCIPAL_ID${RESET}       = $MI_PRINCIPAL_ID"
   blank
-  echo -e "  ${BOLD}${YELLOW}Post-Terraform (set after first terraform apply):${RESET}"
-  echo -e "  ${BOLD}ACR_NAME${RESET}               = <from shared Terraform output>"
-  echo -e "  ${BOLD}KEY_VAULT_NAME${RESET}         = <from shared Terraform output>"
-  echo -e "  ${BOLD}ACR_LOGIN_SERVER${RESET}       = <ACR_NAME>.azurecr.io"
+  echo -e "  ${BOLD}${YELLOW}Note: Containers are computed per-env — no container secret needed.${RESET}"
   blank
-  echo -e "  ${BOLD}backend.tf reference:${RESET}"
-  printf   '    resource_group_name  = "%s"\n' "$SHARED_RG"
+  echo -e "  ${BOLD}State backend layout:${RESET}"
+  printf   '    resource_group_name  = "%s"\n' "$STATE_RG"
   printf   '    storage_account_name = "%s"\n' "$SA_NAME"
-  printf   '    container_name       = "%s"\n' "$CONTAINER_NAME"
-  printf   '    key                  = "dev.terraform.tfstate"\n'
+  printf   '    container (dev)      = "rentalapp-dev-tfstate"\n'
+  printf   '    container (qa)       = "rentalapp-qa-tfstate"\n'
+  printf   '    key (all)            = "terraform.tfstate"\n'
   blank
 
   success "Azure bootstrap complete."

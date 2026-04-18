@@ -6,5 +6,4 @@ locals {
     managed = "terraform"
   }
 
-  acr_ready = var.acr_name != ""
 }

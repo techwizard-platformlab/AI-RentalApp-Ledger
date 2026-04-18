@@ -1,9 +1,10 @@
 terraform {
   backend "azurerm" {
-    resource_group_name  = "my-Rental-App"
-    storage_account_name = "rentalledgertf8d76e26a"
-    container_name       = "tfstate"
-    key                  = "dev.terraform.tfstate"
-    use_oidc             = true
+    # All values injected at runtime via terraform init -backend-config in CI:
+    #   resource_group_name  = TF_BACKEND_RG  (techwizard-platformlab-apps)
+    #   storage_account_name = TF_BACKEND_SA  (techwizardappstfstate)
+    #   container_name       = rentalapp-dev-tfstate
+    key      = "terraform.tfstate"
+    use_oidc = true
   }
 }
