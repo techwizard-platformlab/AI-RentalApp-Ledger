@@ -1,0 +1,36 @@
+# Dev environment overrides — Azure
+global:
+  repoURL: "https://github.com/YOUR_ORG/YOUR_REPO"
+  targetRevision: main
+
+app:
+  name: rental-ledger
+  namespace: rental-dev
+  environment: dev
+  cloud: azure
+  project: rental-ledger
+  manifestPath: "platform/kubernetes/overlays/dev"
+  registryServer: "ACR_LOGIN_SERVER"   # patched by bootstrap workflow
+  sync:
+    automated: true    # auto-sync in dev
+    prune: true
+    selfHeal: true
+    createNamespace: true
+  revisionHistoryLimit: 5
+
+appProject:
+  name: rental-ledger
+  description: "Rental App Ledger — dev"
+  sourceRepos:
+    - "https://github.com/YOUR_ORG/YOUR_REPO"
+  destinations:
+    - server: "https://kubernetes.default.svc"
+      namespace: "rental-dev"
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: ResourceQuota

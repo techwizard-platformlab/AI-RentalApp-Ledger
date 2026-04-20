@@ -1,0 +1,36 @@
+# QA environment overrides — Azure
+global:
+  repoURL: "https://github.com/YOUR_ORG/YOUR_REPO"
+  targetRevision: main
+
+app:
+  name: rental-ledger
+  namespace: rental-qa
+  environment: qa
+  cloud: azure
+  project: rental-ledger
+  manifestPath: "platform/kubernetes/overlays/qa"
+  registryServer: "ACR_LOGIN_SERVER"
+  sync:
+    automated: false   # manual sync in QA — requires review
+    prune: false
+    selfHeal: false
+    createNamespace: true
+  revisionHistoryLimit: 10
+
+appProject:
+  name: rental-ledger
+  description: "Rental App Ledger — qa"
+  sourceRepos:
+    - "https://github.com/YOUR_ORG/YOUR_REPO"
+  destinations:
+    - server: "https://kubernetes.default.svc"
+      namespace: "rental-qa"
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: ResourceQuota

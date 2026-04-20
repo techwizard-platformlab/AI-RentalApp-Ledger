@@ -1,0 +1,5 @@
+behave>=1.2.6
+requests>=2.31.0
+behave-html-formatter>=0.9.0
+kubernetes>=28.1.0
+pytest>=8.0.0

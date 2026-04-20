@@ -1,0 +1,47 @@
+# ArgoCD PostSync Hook — generic template
+# Runs validate_deployment.sh after every ArgoCD sync.
+# Copy to platform/kubernetes/overlays/<env>/ and replace ENV and CLOUD values.
+#
+# CLOUD and ENV are parameterized via env vars on the container.
+# The script is mounted from a ConfigMap (created separately).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: post-deploy-validate
+  namespace: rental-ENV   # replace ENV
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: validation-sa
+      containers:
+        - name: validate
+          image: bitnami/kubectl:latest
+          command: ["/bin/bash", "-c"]
+          args:
+            - /scripts/validate_deployment.sh --cloud $(CLOUD) --env $(ENV) --notify discord
+          env:
+            - name: CLOUD
+              value: "CLOUD_VALUE"   # replace: azure | gcp
+            - name: ENV
+              value: "ENV_VALUE"     # replace: dev | qa | uat | prod
+            - name: DISCORD_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: notification-secret
+                  key: discord-webhook-url
+                  optional: true
+            - name: GATEWAY_URL
+              value: ""   # leave empty to use default cluster-local URL
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: validate-script-cm
+            defaultMode: 0755

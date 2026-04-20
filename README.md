@@ -1,266 +1,176 @@
 # rentalAppLedger — Platform Repository
 
-Cloud-native, AI-augmented rental property management platform. This repository contains the **platform layer**: infrastructure as code, Kubernetes manifests, GitOps configuration, security policies, observability, and AI tooling. The Django REST API lives in the companion [RentalApp-Build](https://github.com/techwizard-platformlab/RentalApp-Build) repo.
+Cloud-native, AI-augmented rental property management platform.
+
+This repository contains the **platform layer**: infrastructure as code,
+Kubernetes manifests, GitOps configuration, security policies, observability,
+and AI tooling. The Django REST API lives in the companion
+[RentalApp-Build](https://github.com/YOUR_ORG/RentalApp-Build) repo.
+
+**Multi-cloud**: Azure (AKS + ACR + Key Vault) and GCP (GKE + Artifact Registry + Secret Manager)  
+**GitOps**: ArgoCD with Helm-based environment configuration  
+**IaC**: Terraform with modular, per-environment state  
 
 ---
 
-## Repository Structure
+## Repository structure
 
 ```
-AI-RentalApp-Ledger/
-├── .github/workflows/          # GitHub Actions CI/CD pipelines
+.
+├── .github/
+│   ├── scripts/                  # Cloud-specific shell scripts (logic layer)
+│   │   ├── azure/
+│   │   │   ├── bootstrap.sh      # Azure ArgoCD bootstrap logic
+│   │   │   └── ci-rag-api.sh     # Azure ACR login + tag resolution
+│   │   ├── gcp/
+│   │   │   ├── bootstrap.sh      # GCP ArgoCD bootstrap logic
+│   │   │   └── ci-rag-api.sh     # GCP Artifact Registry auth + tag resolution
+│   │   ├── deploy-compute.sh     # Re-deploy cluster (after session destroy)
+│   │   └── destroy-compute.sh    # Destroy cluster to stop billing
+│   └── workflows/                # GitHub Actions orchestration (thin wrappers)
+│       ├── argocd-bootstrap.yml  # Install/manage ArgoCD on AKS/GKE
+│       ├── ci-rag-api.yml        # Build + push RAG API container image
+│       ├── terraform.yml         # Terraform plan / apply / destroy
+│       ├── ci-build.yml          # Linting, OPA policy checks, Trivy scans
+│       ├── cost-check.yml        # Infracost budget enforcement
+│       ├── k8s-validate.yml      # Kubernetes manifest validation
+│       └── qa-validate.yml       # BDD smoke tests post-deploy
+│
+├── .infracost/
+│   └── config.yml                # Multi-env, multi-cloud cost analysis config
+│
 ├── apps/
 │   └── ai-engine/
-│       ├── prompt/             # Prompt engineering guides (per build phase)
-│       ├── rag/                # RAG API (FastAPI + ChromaDB + LLM)
+│       ├── prompt/               # Prompt engineering guides per build phase
+│       ├── rag/                  # RAG API (FastAPI + ChromaDB + OpenAI)
 │       └── tools/
-│           ├── k8s-assistant/  # AI-powered pod diagnostics
-│           └── anomaly-detector/ # Statistical anomaly detection (Z-score, IQR)
-├── bootstrap/                  # One-time cloud bootstrap scripts (Azure + GCP)
-├── ci-cd/
-│   └── scripts/                # deploy-compute.sh / destroy-compute.sh
+│           ├── k8s-assistant/    # AI-powered pod diagnostics
+│           └── anomaly-detector/ # Statistical anomaly detection
+│
+├── bootstrap/                    # One-time cloud setup (Azure + GCP)
+│   ├── .env.example              # Generic config template (no secrets)
+│   ├── bootstrap.sh              # Create MI/WI, Key Vault, TF state bucket
+│   ├── load-secrets.sh           # Source secrets into shell (never exec)
+│   ├── set-github-secrets.py     # Push cloud secrets → GitHub repo secrets
+│   └── store-secrets.sh          # Store third-party secrets into cloud store
+│
 ├── environments/
-│   └── dev/
-│       └── testing/            # BDD tests (Behave), post-deploy validation
+│   ├── shared/testing/           # Generic smoke validation (all clouds/envs)
+│   │   ├── validate_deployment.sh
+│   │   └── argocd-postsync-hook.yaml
+│   ├── dev/testing/              # Dev BDD tests (Behave)
+│   └── qa/testing/               # QA BDD tests
+│
 ├── infrastructure/
 │   ├── azure/
-│   │   ├── shared/              # Shared layer — ACR + Key Vault (permanent, run once)
-│   │   ├── environments/dev|qa/ # Terraform root configs per environment
-│   │   └── modules/            # aks, postgresql, sql_database, vnet, keyvault, budget, …
+│   │   ├── modules/              # 13 reusable Azure modules (AKS, ACR, KV, PG, …)
+│   │   └── environments/         # dev / qa root modules
 │   └── gcp/
-│       ├── environments/dev|qa/
-│       └── modules/            # gke, artifact_registry, cloud_sql, vpc, …
-├── platform/
-│   ├── gitops/argocd/
-│   │   ├── apps/               # ArgoCD Application + AppProject + ApplicationSet CRDs
-│   │   ├── argocd/             # ArgoCD Helm install values
-│   │   ├── helm/               # PostgreSQL fallback Helm values
-│   │   └── notifications/      # Discord notification templates + triggers
-│   ├── kubernetes/
-│   │   ├── base/               # Kustomize base manifests (api-gateway, rental/ledger/notification services)
-│   │   └── overlays/dev|qa/    # Environment overlays (replicas, image tags, labels)
-│   ├── networking/
-│   │   └── istio/              # mTLS, gateway, virtual services, auth policies
-│   ├── observability/
-│   │   ├── alerting/           # Discord notifier, email notifier, K8s event watcher
-│   │   └── monitoring/         # Prometheus Helm values, alert rules, Grafana dashboards
-│   └── security/
-│       ├── gatekeeper/         # OPA Gatekeeper constraint templates + constraints
-│       ├── kyverno/            # Admission control policies + exceptions
-│       └── policies/           # OPA/Rego policies (cost, Terraform, PR)
-└── .infracost/                 # Infracost project config
+│       ├── modules/              # 8 reusable GCP modules (GKE, AR, CloudSQL, …)
+│       ├── shared/               # Cross-env GCP shared resources
+│       └── environments/         # dev / qa root modules
+│
+└── platform/
+    ├── gitops/argocd/
+    │   ├── apps/                 # ArgoCD Application manifests (bootstrap applies)
+    │   ├── charts/               # Helm charts for ArgoCD manifests
+    │   │   ├── rental-app/       # App + AppProject chart
+    │   │   └── platform-addons/  # Istio, Prometheus chart
+    │   ├── environments/         # Per-env Helm value overrides (dev/, qa/)
+    │   ├── values/               # Shared values (argocd-install, postgresql)
+    │   └── notifications/        # ArgoCD notification config
+    ├── kubernetes/               # Kustomize base + overlays per environment
+    ├── observability/            # Grafana dashboards, alertmanager config
+    └── security/
+        └── policies/             # OPA / Conftest policies (cost, k8s)
 ```
 
 ---
 
 ## Workflows
 
-| Workflow | Trigger | What it does |
-|---|---|---|
-| `terraform.yml` | Manual / cron | Plan / apply / destroy + scheduled dev lifecycle |
-| `argocd-bootstrap.yml` | Manual | Install ArgoCD, apply AppProject + Application CRDs |
-| `k8s-validate.yml` | Manual / path trigger | kubeconform + kustomize build validation |
-| `ci-build.yml` | Manual / path trigger | OPA Rego lint + Trivy security scan |
-| `cost-check.yml` | Manual / path trigger | Infracost estimate + OPA cost guardrail |
-
-### Inputs: `terraform.yml`
-
-| Input | Options | Default |
-|---|---|---|
-| `target_env` | dev / qa / uat / prod | dev |
-| `cloud` | azure / gcp / both | azure |
-| `action` | plan / apply / destroy | plan |
-| `scope` | compute-only / full | compute-only |
-| `confirm` | type env name for non-dev apply/destroy | — |
-
-`compute-only` destroys AKS/GKE + VNet/VPC but keeps ACR, Key Vault, and Storage Account — preserving data between sessions.
-
-**Scheduled runs** (cron — no manual input needed):
-- Saturday 07:30 IST → `apply` dev compute (start session)
-- Sunday 23:30 IST → `destroy` dev compute (stop billing)
-
-### Inputs: `argocd-bootstrap.yml`
-
-| Input | Options | Default |
-|---|---|---|
-| `environment` | dev / qa | dev |
-| `action` | install / upgrade / apply-apps / uninstall | install |
-| `db_mode` | azure-sql / helm-pg / azure-pg | azure-sql |
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `terraform.yml` | PR + manual | Plan / apply / destroy infrastructure |
+| `argocd-bootstrap.yml` | Manual | Install/manage ArgoCD on AKS or GKE |
+| `ci-rag-api.yml` | Push to main / manual | Build and push RAG API image to registry |
+| `ci-build.yml` | Manual | OPA policy lint + Trivy security scan |
+| `cost-check.yml` | PR | Infracost budget check ($22/month limit) |
+| `k8s-validate.yml` | PR | Kubeconform manifest validation |
+| `qa-validate.yml` | Manual | BDD smoke tests against live cluster |
 
 ---
 
-## Cost Model
+## Quick start
 
-Weekly budget target: **~400 INR / ~$5 USD**.
-
-- Compute (AKS/GKE) runs only when needed — created at session start, destroyed at end.
-- ACR, SQL, Key Vault, and Storage Account persist between sessions (kept for data continuity).
-- `ci-cd/scripts/deploy-compute.sh` and `destroy-compute.sh` for quick manual control.
-- `terraform-schedule.yml` automates the destroy/recreate cycle (Saturday morning / Sunday night cron).
-- `cost-check.yml` blocks Terraform apply if Infracost estimate exceeds the weekly budget via OPA.
-
----
-
-## Quick Start
-
-### 1 — One-time bootstrap
+### 1. Bootstrap cloud prerequisites
 
 ```bash
-# Azure
-az login
-az account set --subscription "<your-subscription-id>"
-CLOUD=azure bash bootstrap/bootstrap.sh
-
-# GCP
-gcloud auth login && gcloud config set project <your-project-id>
-CLOUD=gcp bash bootstrap/bootstrap.sh
-
-# Both clouds
-CLOUD=both bash bootstrap/bootstrap.sh
+cp bootstrap/.env.example bootstrap/.env
+$EDITOR bootstrap/.env      # fill names and regions — no secrets here
+az login                     # or: gcloud auth login
+bash bootstrap/bootstrap.sh
+python bootstrap/set-github-secrets.py
 ```
 
-The script creates the Service Principal / Workload Identity and prints all required GitHub Secrets.
-
-### 2 — Add GitHub Secrets
+### 2. Deploy infrastructure
 
 ```
-GitHub → Settings → Secrets and variables → Actions
-
-# Azure OIDC (no client secret — uses Managed Identity + federated credentials)
-AZURE_CLIENT_ID          # Managed Identity client ID
-AZURE_TENANT_ID          # Azure AD tenant ID
-AZURE_SUBSCRIPTION_ID    # Subscription ID
-
-# Terraform state backend (in my-Rental-App)
-TF_BACKEND_RG            # Storage Account resource group  (my-Rental-App)
-TF_BACKEND_SA            # Storage Account name
-TF_BACKEND_CONTAINER     # Blob container name (e.g. tfstate)
-
-# Shared permanent layer (obtained after first azure_shared_apply run)
-TF_SHARED_RG             # Permanent resource group name   (my-Rental-App)
-ACR_NAME                 # Azure Container Registry name   (output of shared Terraform)
-KEY_VAULT_NAME           # Key Vault name                  (output of shared Terraform)
-
-# GCP OIDC
-GCP_PROJECT_ID, GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT
-
-# Notifications
-DISCORD_WEBHOOK_URL, SMTP_PASSWORD, MAIL_TO
-```
-
-**RentalApp-Build repo** (`techwizard-platformlab/RentalApp-Build` → Settings → Secrets):
-
-```
-AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
-ACR_NAME, ACR_LOGIN_SERVER
-DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
-GROQ_API_KEY, ANTHROPIC_API_KEY   # optional — AI features
-```
-
-### 3 — Provision infrastructure
-
-First run — provision the **shared layer** (ACR + Key Vault, runs once):
-
-```
-GitHub → Actions → terraform.yml
-  cloud: azure
-  action: apply    → approve in "shared" Environment gate
-           ↳ captures ACR_NAME and KEY_VAULT_NAME — save these as GitHub Secrets
-```
-
-Then provision the **env layer** (AKS, SQL, VNet, etc.):
-
-```
-GitHub → Actions → terraform.yml
-  cloud: azure (or gcp / both)
+GitHub Actions → Infra → workflow_dispatch
   target_env: dev
-  action: plan     → review output
-  action: apply    → approve in "terraform-destructive-approval" gate (if deletions detected)
+  cloud: azure
+  action: plan
+# Review plan → re-run with action: apply
 ```
 
-> **GitHub Environments to create** (repo → Settings → Environments):
-> - `shared` — add yourself as required reviewer (protects ACR + Key Vault)
-> - `terraform-destructive-approval` — add yourself as required reviewer (protects apply/destroy with deletions)
-> - `dev`, `qa` — optional, for environment-scoped OIDC federation
-
-### 4 — Bootstrap ArgoCD + deploy apps
+### 3. Install ArgoCD
 
 ```
-GitHub → Actions → argocd-bootstrap.yml
-  action: install          # installs ArgoCD via Helm
-  action: apply-apps       # creates AppProject + Application CRDs
+GitHub Actions → ArgoCD Bootstrap → workflow_dispatch
+  cloud: azure
+  environment: dev
+  action: install
+  db_mode: azure-pg
 ```
 
-### 5 — Install cluster add-ons (one-time, manual)
+### 4. Deploy platform add-ons (Istio + Prometheus)
 
-See [STEPS.md](STEPS.md) Phase 3 for step-by-step commands covering:
-Istio, Kyverno, OPA Gatekeeper, Prometheus + Grafana.
-
----
-
-## Day-to-day Operations
-
-### Start a session (create compute)
-
-```bash
-bash ci-cd/scripts/deploy-compute.sh azure dev
-# or via GitHub Actions: terraform.yml → action: apply
 ```
-
-### End a session (destroy compute)
-
-```bash
-bash ci-cd/scripts/destroy-compute.sh azure dev
-# or via GitHub Actions: infra-destroy.yml → scope: compute-only
-```
-
-### Force-sync ArgoCD app
-
-```bash
-argocd app sync rentalapp-dev --force
-```
-
-### Check pod status
-
-```bash
-kubectl get pods -n rental-dev
-kubectl get pods -n rental-qa
-```
-
-### Run validation
-
-```bash
-bash environments/dev/testing/validate_deployment.sh --cloud azure --env dev --notify discord
-```
-
-### Run BDD tests locally
-
-```bash
-cd environments/dev/testing
-BASE_URL=http://localhost:8000 behave features/ --tags @smoke
+GitHub Actions → ArgoCD Bootstrap → workflow_dispatch
+  action: apply-addons
+  addons: all
 ```
 
 ---
 
-## Architecture
+## Cloud support matrix
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for:
-- Full component diagram (AKS, services, Istio mesh, Azure resources)
-- Application component reference (API Gateway, Rental/Ledger/Notification services, RAG API, AI tools)
-- Data models
-- Infrastructure module details
-- Security layers (Istio mTLS → Kyverno → OPA → Pod security)
-- Observability (Prometheus alerts, Grafana dashboards, Discord notifications)
-- Full CI/CD pipeline reference
+| Feature | Azure | GCP |
+|---------|-------|-----|
+| Kubernetes | AKS | GKE |
+| Container registry | ACR | Artifact Registry |
+| Database | PostgreSQL Flexible / SQL Database | Cloud SQL |
+| Secrets | Key Vault + ESO | Secret Manager + ESO |
+| Auth | Managed Identity + OIDC | Workload Identity + OIDC |
+| TF state | Azure Blob Storage | GCS Bucket |
+| Bootstrap scripts | `.github/scripts/azure/` | `.github/scripts/gcp/` |
 
 ---
 
-## Key Access Points (after deploy)
+## Key design decisions
 
-| Service | Command |
-|---|---|
-| ArgoCD UI | `kubectl port-forward svc/argocd-server -n argocd 8080:443` → https://localhost:8080 |
-| Grafana | `kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80` → http://localhost:3000 |
-| API Gateway | `kubectl get svc api-gateway -n rental-dev` → EXTERNAL-IP:8000 |
-| RAG API | `kubectl port-forward svc/rag-api -n rental-dev 8080:8080` → http://localhost:8080 |
-| Prometheus | `kubectl port-forward svc/kube-prometheus-stack-prometheus -n monitoring 9090:9090` |
+- **No secrets in code** — all secrets live in cloud secrets stores; GitHub Secrets hold only OIDC federation config
+- **Scripts separate from workflows** — workflows are thin orchestration; logic lives in `.github/scripts/azure/` or `.github/scripts/gcp/`
+- **Helm-based GitOps** — ArgoCD Applications and AppProjects are generated from Helm charts with per-env value overrides
+- **Deploy-destroy cost pattern** — cluster is destroyed after each session; ACR/SQL persist (cheap); OPA budget: $22/month cap
+- **Manual destroy only** — no scheduled destroy; all destructive operations require human approval
+
+---
+
+## Further reading
+
+- [bootstrap/README.md](bootstrap/README.md) — cloud prerequisites and onboarding
+- [infrastructure/README.md](infrastructure/README.md) — Terraform module guide
+- [platform/gitops/argocd/README.md](platform/gitops/argocd/README.md) — ArgoCD GitOps guide
+- [environments/shared/testing/README.md](environments/shared/testing/README.md) — testing framework
+- [ARCHITECTURE.md](ARCHITECTURE.md) — full system architecture reference

@@ -1,0 +1,91 @@
+# ArgoCD Helm install values — shared across all environments
+# Chart: argo/argo-cd
+# Installed by: argocd-bootstrap.yml workflow
+
+global:
+  ha:
+    enabled: false   # single-replica for cost efficiency; set true for prod
+
+server:
+  replicas: 1
+  service:
+    type: LoadBalancer
+  ingress:
+    enabled: false   # use LoadBalancer directly; enable for ingress controller setups
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+repoServer:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+applicationSet:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+controller:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+redis:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+notifications:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+dex:
+  enabled: false   # disabled — using OIDC via cloud provider instead
+
+configs:
+  params:
+    server.insecure: false
+    timeout.reconciliation: 180s
+  # RBAC — generic read/write for both Azure and GCP clusters
+  rbac:
+    policy.default: role:readonly
+    policy.csv: |
+      p, role:admin, applications, *, */*, allow
+      p, role:admin, clusters,     *, *,   allow
+      p, role:admin, repositories, *, *,   allow
+      p, role:admin, projects,     *, *,   allow
+      g, platform-admins, role:admin

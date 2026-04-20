@@ -1,0 +1,37 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: post-deploy-validate
+  namespace: rental-qa
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: validation-sa
+      containers:
+        - name: validate
+          image: bitnami/kubectl:latest
+          command: ["/bin/bash", "-c"]
+          args:
+            - /scripts/validate_deployment.sh --cloud $(CLOUD) --env qa --notify discord
+          env:
+            - name: CLOUD
+              value: "azure"   # override per deployment: azure | gcp
+            - name: DISCORD_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: notification-secret
+                  key: discord-webhook-url
+                  optional: true
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: validate-script-cm
+            defaultMode: 0755

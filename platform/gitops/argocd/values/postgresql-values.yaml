@@ -1,0 +1,39 @@
+# Bitnami PostgreSQL Helm values — in-cluster DB for dev/testing
+# Used when db_mode=helm-pg in argocd-bootstrap workflow
+# Chart: bitnami/postgresql
+
+image:
+  tag: "15"
+
+auth:
+  username: rentaladmin
+  database: rental_db
+  # password: set at deploy time via --set auth.password=... (never committed)
+
+primary:
+  persistence:
+    enabled: true
+    size: 2Gi
+    storageClass: ""   # use cluster default
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  initdb:
+    scripts:
+      init.sql: |
+        CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+readReplicas:
+  replicaCount: 0   # no replicas in dev — cost saving
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring

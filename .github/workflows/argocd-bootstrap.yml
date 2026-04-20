@@ -1,18 +1,28 @@
 name: ArgoCD Bootstrap
 
-# Installs ArgoCD on AKS and applies AppProject + Application manifests.
-# Run this ONCE after terraform apply succeeds.
-# Re-run any time the environment is recreated.
+# Installs / manages ArgoCD and platform add-ons on a Kubernetes cluster.
+# Supports Azure (AKS) and GCP (GKE). Cloud-specific logic lives in:
+#   .github/scripts/azure/bootstrap.sh
+#   .github/scripts/gcp/bootstrap.sh
+#
+# Run ONCE after terraform apply succeeds, or re-run to upgrade / apply changes.
 
 on:
   workflow_dispatch:
     inputs:
+      cloud:
+        description: "Target cloud"
+        required: true
+        default: "azure"
+        type: choice
+        options: [azure, gcp]
+
       environment:
         description: "Target environment"
         required: true
         default: "dev"
         type: choice
-        options: [dev, qa]
+        options: [dev, qa, uat, prod]
 
       action:
         description: "Action"
@@ -20,598 +30,121 @@ on:
         default: "install"
         type: choice
         options:
-          - install        # Full install: ArgoCD + PostgreSQL + AppProject + Application
-          - upgrade        # Helm upgrade only (keep ArgoCD apps)
-          - apply-apps     # Apply AppProject + Application only (ArgoCD already running)
-          - apply-addons   # Deploy platform add-ons (Istio, Prometheus/Grafana) via ArgoCD
-          - uninstall      # Remove ArgoCD namespace entirely
+          - install           # Full install: ArgoCD + DB + AppProject + Application
+          - upgrade           # Helm upgrade ArgoCD only (keep existing apps)
+          - apply-apps        # Apply AppProject + Application (ArgoCD already running)
+          - apply-addons      # Deploy Istio, Prometheus/Grafana via ArgoCD
+          - uninstall-apps    # Remove ArgoCD Applications only (keep ArgoCD + add-ons)
+          - uninstall-addons  # Remove Istio, Prometheus (keep ArgoCD + apps)
+          - uninstall         # Remove ArgoCD namespace entirely
 
       addons:
-        description: "Add-ons to deploy (only used when action=apply-addons)"
+        description: "Add-ons (only for action=apply-addons)"
         required: false
         default: "all"
         type: choice
         options:
-          - all             # Deploy all add-ons: Istio + Prometheus/Grafana
-          - istio           # Istio service mesh only
-          - prometheus      # Prometheus + Grafana + Alertmanager only
+          - all       # Istio + Prometheus/Grafana
+          - istio
+          - prometheus
 
       db_mode:
-        description: "Database backend to use"
+        description: "Database backend"
         required: false
         default: "azure-pg"
         type: choice
         options:
-          - azure-pg    # Azure PostgreSQL Flexible Server — pulls creds from Key Vault
-          - helm-pg     # In-cluster PostgreSQL via Bitnami Helm chart (no Azure DB needed)
-          - azure-sql   # Azure SQL Database Basic/S-tier — pulls creds from Key Vault
+          - azure-pg   # Azure PostgreSQL Flexible Server (Key Vault creds)
+          - azure-sql  # Azure SQL Database (Key Vault creds)
+          - helm-pg    # In-cluster Bitnami PostgreSQL (no cloud DB needed)
+          - gcp-pg     # GCP Cloud SQL PostgreSQL (Secret Manager creds)
+          - cloudsql   # Alias for gcp-pg
 
 permissions:
-  contents: write   # required to push the ACR patch commit back to the repo
-  id-token: write   # required for OIDC Azure login
+  contents: write   # push ACR patch commit back to repo
+  id-token: write   # OIDC login (Azure and GCP)
 
 concurrency:
-  group: argocd-${{ github.event.inputs.environment }}
+  group: argocd-${{ github.event.inputs.cloud }}-${{ github.event.inputs.environment }}
   cancel-in-progress: false
 
 env:
-  ARGOCD_VERSION: "7.3.11"        # argo-cd Helm chart version (ArgoCD v2.11)
-  AKS_NAME: "${{ github.event.inputs.environment }}-eus2-aks"
+  ARGOCD_VERSION:  "7.3.11"
   NAMESPACE_ARGOCD: argocd
-  NAMESPACE_APP: "rental-${{ github.event.inputs.environment }}"
-  DISCORD_WEBHOOK_URL: ""         # populated at runtime from Key Vault
+  NAMESPACE_APP:   "rental-${{ github.event.inputs.environment }}"
+  ENV:             ${{ github.event.inputs.environment }}
+  ACTION:          ${{ github.event.inputs.action }}
+  DB_MODE:         ${{ github.event.inputs.db_mode }}
+  ADDONS:          ${{ github.event.inputs.addons }}
+  CLOUD:           ${{ github.event.inputs.cloud }}
+  DISCORD_WEBHOOK_URL: ""   # populated at runtime by bootstrap script
 
 jobs:
   bootstrap:
-    name: "ArgoCD ${{ github.event.inputs.action }} / ${{ github.event.inputs.environment }}"
+    name: "${{ github.event.inputs.action }} / ${{ github.event.inputs.cloud }} / ${{ github.event.inputs.environment }}"
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
-      # ── Azure login (OIDC / Managed Identity — no client secret) ──────────────
-      - name: Azure login
+      # ── Azure auth ───────────────────────────────────────────────────────
+      - name: Azure login (OIDC)
+        if: env.CLOUD == 'azure'
         uses: azure/login@a65d910e8af852a8061c627c456678983e180302  # v2
         with:
           client-id:       ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Fetch secrets from Key Vault
+      # ── GCP auth ─────────────────────────────────────────────────────────
+      - name: GCP login (OIDC)
+        if: env.CLOUD == 'gcp'
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed  # v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account:            ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud CLI
+        if: env.CLOUD == 'gcp'
+        uses: google-github-actions/setup-gcloud@v2
+
+      # ── Cloud-specific bootstrap ──────────────────────────────────────────
+      - name: Run Azure bootstrap
+        if: env.CLOUD == 'azure'
+        id: bootstrap
         env:
-          DISCORD_WEBHOOK_SECRET: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: |
-          KV="techwizard-plt-kv"
-          if [[ -n "$DISCORD_WEBHOOK_SECRET" ]]; then
-            echo "::add-mask::$DISCORD_WEBHOOK_SECRET"
-            echo "DISCORD_WEBHOOK_URL=$DISCORD_WEBHOOK_SECRET" >> "$GITHUB_ENV"
-          fi
-          ARGOCD_PAT=$(az keyvault secret show --vault-name "$KV" --name "argocd-github-pat" --query value -o tsv 2>/dev/null || true)
-          if [[ -n "$ARGOCD_PAT" ]]; then
-            echo "::add-mask::$ARGOCD_PAT"
-            echo "ARGOCD_GITHUB_PAT=$ARGOCD_PAT" >> "$GITHUB_ENV"
-          fi
+          PLATFORM_KV_NAME:  ${{ secrets.PLATFORM_KV_NAME }}
+          AKS_NAME:          "${{ github.event.inputs.environment }}-aks"
+          LOCATION_SHORT:    ${{ secrets.AZURE_LOCATION_SHORT || 'eus2' }}
+          GITOPS_REPO_URL:   "https://github.com/${{ github.repository }}"
+          OPENAI_API_KEY:    ${{ secrets.OPENAI_API_KEY }}
+          SMTP_PASSWORD:     ${{ secrets.SMTP_PASSWORD }}
+          ALERT_EMAIL:       ${{ secrets.ALERT_EMAIL || 'alerts@example.com' }}
+          SMTP_HOST:         ${{ secrets.SMTP_HOST || 'smtp.example.com' }}
+          SMTP_USERNAME:     ${{ secrets.SMTP_USERNAME || '' }}
+        run: bash .github/scripts/azure/bootstrap.sh
 
-      # ── Get AKS credentials ─────────────────────────────────────────────────
-      - name: Get AKS credentials
-        run: |
-          ENV="${{ github.event.inputs.environment }}"
-          ENV_RG="my-Rental-App-${ENV^}"   # e.g. my-Rental-App-Dev
-          az aks get-credentials \
-            --resource-group "$ENV_RG" \
-            --name "${{ env.AKS_NAME }}" \
-            --overwrite-existing
-          kubectl get nodes
-
-      # ── Fetch ACR login server dynamically ─────────────────────────────────
-      - name: Get ACR login server
-        id: acr
-        run: |
-          # Read from env KV secret (written by Terraform after apply); fall back to az acr list
-          ENV_RG="my-Rental-App-$(echo "${{ github.event.inputs.environment }}" | sed 's/./\u&/')"
-          ACR_SERVER=$(az keyvault secret show \
-            --vault-name "techwizard-plt-kv" \
-            --name "acr-login-server" \
-            --query value -o tsv 2>/dev/null || \
-          az acr list \
-            --resource-group "$ENV_RG" \
-            --query "[0].loginServer" -o tsv)
-          echo "login_server=$ACR_SERVER" >> "$GITHUB_OUTPUT"
-          echo "ACR login server: $ACR_SERVER"
-
-      # ── Patch kustomize overlay with real ACR server + push to git ──────────
-      # Replaces ACR_LOGIN_SERVER placeholder in platform/kubernetes/overlays/dev/kustomization.yaml
-      # so ArgoCD can resolve the full image reference without needing Image Updater
-      # to do the first pull. The PAT needs repo write scope.
-      - name: Patch ACR image in kustomize overlay
-        if: github.event.inputs.action != 'uninstall'
-        run: |
-          ACR_SERVER="${{ steps.acr.outputs.login_server }}"
-          # Replace either:
-          #   • the placeholder "ACR_LOGIN_SERVER" (first run / after git reset)
-          #   • any existing ACR URL "*.azurecr.io" (env recreated → new ACR name)
-          # This way re-running bootstrap always patches to the current ACR, no manual edits.
-          # Delimiter is # (not |) to avoid clash with | used for regex alternation in the pattern.
-          sed -i -E "s#(ACR_LOGIN_SERVER|[a-z0-9]+\.azurecr\.io)#${ACR_SERVER}#g" \
-            platform/kubernetes/overlays/${{ github.event.inputs.environment }}/kustomization.yaml
-
-          git config user.email "argocd-bootstrap@github-actions"
-          git config user.name "ArgoCD Bootstrap"
-          git add platform/kubernetes/overlays/${{ github.event.inputs.environment }}/kustomization.yaml
-          git diff --cached --quiet && echo "No ACR change needed" && exit 0
-          git commit -m "ci: set ACR server ${ACR_SERVER} in dev overlay"
-          # Use GITHUB_TOKEN (auto-provided, no secret needed) with contents: write permission.
-          # Push to the branch this workflow was triggered from — never hardcode main.
-          git push \
-            https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git \
-            HEAD:${{ github.ref_name }}
-
-      # ── Create ACR imagePullSecret in app namespace ─────────────────────────
-      - name: Create ACR imagePullSecret
-        if: github.event.inputs.action != 'uninstall'
-        run: |
-          kubectl create namespace "${{ env.NAMESPACE_APP }}" --dry-run=client -o yaml | kubectl apply -f -
-
-          ACR_SERVER="${{ steps.acr.outputs.login_server }}"
-          # Derive ACR name from the login server (e.g. deveusacrjek7wu.azurecr.io → deveusacrjek7wu)
-          # so no ACR_NAME secret is needed.
-          ACR_NAME=$(echo "$ACR_SERVER" | cut -d'.' -f1)
-          # Admin user is disabled by default — enable it so credential show works.
-          az acr update --name "$ACR_NAME" --admin-enabled true --output none
-          ACR_PASSWORD=$(az acr credential show \
-            --name "$ACR_NAME" \
-            --query "passwords[0].value" -o tsv)
-
-          kubectl create secret docker-registry acr-pull-secret \
-            --namespace "${{ env.NAMESPACE_APP }}" \
-            --docker-server="${ACR_SERVER}" \
-            --docker-username="${ACR_NAME}" \
-            --docker-password="${ACR_PASSWORD}" \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-      # ── Option A: Deploy PostgreSQL via Helm inside AKS ──────────────────────
-      # Bitnami PostgreSQL chart — no Azure resource provider needed.
-      # Chosen when db_mode == 'helm-pg'.
-      - name: Deploy PostgreSQL via Helm (in-cluster)
-        if: |
-          github.event.inputs.action != 'uninstall' &&
-          github.event.inputs.db_mode == 'helm-pg'
-        id: pg_helm
-        run: |
-          NS="${{ env.NAMESPACE_APP }}"
-          DB_PASSWORD=$(openssl rand -base64 32 | tr -d '/+=')
-          DJANGO_SECRET_KEY=$(openssl rand -base64 64 | tr -d '/+=')
-
-          # Store generated passwords in Key Vault for reference
-          ENV="${{ github.event.inputs.environment }}"
-          ENV_RG="my-Rental-App-${ENV^}"
-          KV_NAME=$(az keyvault list \
-            --resource-group "$ENV_RG" \
-            --query "[0].name" -o tsv 2>/dev/null || echo "")
-
-          if [ -n "$KV_NAME" ]; then
-            az keyvault secret set --vault-name "$KV_NAME" --name "db-password"      --value "$DB_PASSWORD"      --output none
-            az keyvault secret set --vault-name "$KV_NAME" --name "django-secret-key" --value "$DJANGO_SECRET_KEY" --output none
-          fi
-
-          helm repo add bitnami https://charts.bitnami.com/bitnami
-          helm repo update
-
-          helm upgrade --install postgresql bitnami/postgresql \
-            --namespace "$NS" \
-            --values platform/gitops/argocd/helm/postgresql/values-dev.yaml \
-            --set auth.password="$DB_PASSWORD" \
-            --set auth.postgresPassword="$DB_PASSWORD" \
-            --timeout 5m \
-            --wait
-
-          # Outputs for secret creation step
-          echo "db_host=postgresql.$NS.svc.cluster.local" >> "$GITHUB_OUTPUT"
-          echo "db_name=rental_db"                        >> "$GITHUB_OUTPUT"
-          echo "db_user=rentaladmin"                      >> "$GITHUB_OUTPUT"
-          echo "db_password=$DB_PASSWORD"                 >> "$GITHUB_OUTPUT"
-          echo "db_port=5432"                             >> "$GITHUB_OUTPUT"
-          echo "django_secret_key=$DJANGO_SECRET_KEY"     >> "$GITHUB_OUTPUT"
-
-      # ── Option B: Pull secrets from Key Vault (Azure SQL or Azure PostgreSQL) ─
-      # Used when db_mode == 'azure-sql' (default) or 'azure-pg'.
-      # Terraform writes all secrets to Key Vault during infrastructure provisioning.
-      - name: Fetch secrets from Key Vault
-        if: |
-          github.event.inputs.action != 'uninstall' &&
-          (github.event.inputs.db_mode == 'azure-sql' || github.event.inputs.db_mode == 'azure-pg' || github.event.inputs.db_mode == '')
-        id: pg_kv
-        run: |
-          ENV="${{ github.event.inputs.environment }}"
-          ENV_RG="my-Rental-App-${ENV^}"
-          KV_NAME=$(az keyvault list \
-            --resource-group "$ENV_RG" \
-            --query "[0].name" -o tsv)
-
-          fetch() { az keyvault secret show --vault-name "$KV_NAME" --name "$1" --query value -o tsv; }
-
-          echo "db_host=$(fetch db-host)"                     >> "$GITHUB_OUTPUT"
-          echo "db_name=$(fetch db-name)"                     >> "$GITHUB_OUTPUT"
-          echo "db_user=$(fetch db-user)"                     >> "$GITHUB_OUTPUT"
-          echo "db_password=$(fetch db-password)"             >> "$GITHUB_OUTPUT"
-          echo "db_port=$(fetch db-port)"                     >> "$GITHUB_OUTPUT"
-          echo "django_secret_key=$(fetch django-secret-key)" >> "$GITHUB_OUTPUT"
-
-      # ── Seed app secrets from GitHub Secrets → Key Vault ────────────────────
-      # Secrets that are not generated by Terraform (e.g. third-party API keys,
-      # webhook URLs) are stored as GitHub Secrets and written here into the env
-      # Key Vault so ESO can serve them to pods via ExternalSecret resources.
-      - name: Seed app secrets into Key Vault
-        if: github.event.inputs.action != 'uninstall'
+      - name: Run GCP bootstrap
+        if: env.CLOUD == 'gcp'
+        id: bootstrap_gcp
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
-          SMTP_PASSWORD:       ${{ secrets.SMTP_PASSWORD }}
-        run: |
-          ENV="${{ github.event.inputs.environment }}"
-          ENV_RG="my-Rental-App-${ENV^}"
-          KV_NAME=$(az keyvault list \
-            --resource-group "$ENV_RG" \
-            --query "[0].name" -o tsv)
+          GCP_PROJECT_ID:    ${{ secrets.GCP_PROJECT_ID }}
+          GCP_REGION:        ${{ secrets.GCP_REGION || 'us-central1' }}
+          GKE_CLUSTER_NAME:  "${{ github.event.inputs.environment }}-gke"
+          GKE_CLUSTER_ZONE:  ${{ secrets.GKE_CLUSTER_ZONE || 'us-central1-a' }}
+          GCP_GSA_EMAIL:     ${{ secrets.GCP_GSA_EMAIL || '' }}
+          ESO_GSA_EMAIL:     ${{ secrets.ESO_GSA_EMAIL || '' }}
+          GITOPS_REPO_URL:   "https://github.com/${{ github.repository }}"
+          OPENAI_API_KEY:    ${{ secrets.OPENAI_API_KEY }}
+          SMTP_PASSWORD:     ${{ secrets.SMTP_PASSWORD }}
+          ALERT_EMAIL:       ${{ secrets.ALERT_EMAIL || 'alerts@example.com' }}
+          SMTP_HOST:         ${{ secrets.SMTP_HOST || 'smtp.example.com' }}
+          SMTP_USERNAME:     ${{ secrets.SMTP_USERNAME || '' }}
+        run: bash .github/scripts/gcp/bootstrap.sh
 
-          set_secret() {
-            local name="$1" value="$2"
-            if [ -n "$value" ]; then
-              echo "::add-mask::$value"
-              az keyvault secret set --vault-name "$KV_NAME" \
-                --name "$name" --value "$value" --output none
-              echo "Set $name in $KV_NAME"
-            else
-              echo "Skipping $name — GitHub Secret not set"
-            fi
-          }
-
-          set_secret "discord-webhook-url" "$DISCORD_WEBHOOK_URL"
-          set_secret "openai-api-key"      "$OPENAI_API_KEY"
-          set_secret "smtp-password"       "$SMTP_PASSWORD"
-
-      # ── Install External Secrets Operator via ArgoCD ─────────────────────────
-      # ESO pulls secrets from Azure Key Vault automatically — no manual kubectl
-      # create secret needed. The managed identity + federated credential were
-      # created by Terraform; we just wire the client ID here.
-      - name: Install External Secrets Operator
-        if: github.event.inputs.action != 'uninstall'
-        run: |
-          ENV="${{ github.event.inputs.environment }}"
-          ENV_RG="my-Rental-App-${ENV^}"
-          LOCATION_SHORT="eus2"   # matches Terraform location_short var
-
-          # Get ESO managed identity client ID created by Terraform
-          ESO_CLIENT_ID=$(az identity show \
-            --name "${ENV}-${LOCATION_SHORT}-eso-identity" \
-            --resource-group "$ENV_RG" \
-            --query clientId -o tsv)
-
-          echo "ESO client ID: $ESO_CLIENT_ID"
-
-          # Apply ArgoCD Application for ESO with real client ID substituted
-          sed "s/REPLACE_AFTER_TERRAFORM_APPLY/${ESO_CLIENT_ID}/" \
-            platform/gitops/argocd/apps/external-secrets-app.yaml \
-            | kubectl apply -f -
-
-          # Wait for ESO pods to be ready before applying ClusterSecretStore
-          echo "Waiting for ESO to be ready..."
-          kubectl rollout status deployment/external-secrets \
-            -n external-secrets --timeout=5m || true
-
-      # ── Apply ClusterSecretStore pointing at Key Vault ────────────────────────
-      - name: Apply ClusterSecretStore
-        if: github.event.inputs.action != 'uninstall'
-        run: |
-          kubectl apply -f \
-            platform/kubernetes/overlays/${{ github.event.inputs.environment }}/secrets/cluster-secret-store.yaml
-
-          # Verify the store can reach Key Vault
-          echo "Verifying ClusterSecretStore..."
-          sleep 10
-          kubectl get clustersecretstore azure-keyvault \
-            -o jsonpath='{.status.conditions[0].message}' || true
-          echo ""
-
-      # ── Install / Upgrade ArgoCD via Helm ──────────────────────────────────
-      - name: Add Argo Helm repo
-        if: github.event.inputs.action == 'install' || github.event.inputs.action == 'upgrade'
-        run: |
-          helm repo add argo https://argoproj.github.io/argo-helm
-          helm repo update
-
-      - name: Install ArgoCD
-        if: github.event.inputs.action == 'install'
-        run: |
-          kubectl create namespace "${{ env.NAMESPACE_ARGOCD }}" --dry-run=client -o yaml | kubectl apply -f -
-
-          # upgrade --install is idempotent — safe to re-run if install was interrupted
-          helm upgrade --install argocd argo/argo-cd \
-            --namespace "${{ env.NAMESPACE_ARGOCD }}" \
-            --version "${{ env.ARGOCD_VERSION }}" \
-            --values platform/gitops/argocd/argocd/install-values.yaml \
-            --set server.service.type=LoadBalancer \
-            --set server.ingress.enabled=false \
-            --timeout 10m \
-            --wait
-
-      - name: Upgrade ArgoCD
-        if: github.event.inputs.action == 'upgrade'
-        run: |
-          helm upgrade argocd argo/argo-cd \
-            --namespace "${{ env.NAMESPACE_ARGOCD }}" \
-            --version "${{ env.ARGOCD_VERSION }}" \
-            --values platform/gitops/argocd/argocd/install-values.yaml \
-            --set server.service.type=LoadBalancer \
-            --set server.ingress.enabled=false \
-            --timeout 10m \
-            --wait
-
-      # ── Wait for ArgoCD server pod ready, then get external IP ────────────────
-      - name: Wait for ArgoCD LoadBalancer IP
-        if: github.event.inputs.action == 'install' || github.event.inputs.action == 'upgrade'
-        id: argocd_ip
-        run: |
-          # Wait for the deployment itself to be ready before polling for IP
-          echo "Waiting for argocd-server deployment..."
-          kubectl rollout status deployment/argocd-server \
-            -n "${{ env.NAMESPACE_ARGOCD }}" --timeout=8m
-
-          echo "Waiting for LoadBalancer external IP..."
-          for i in $(seq 1 36); do
-            IP=$(kubectl get svc argocd-server -n "${{ env.NAMESPACE_ARGOCD }}" \
-              -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
-            [ -z "$IP" ] && IP=$(kubectl get svc argocd-server -n "${{ env.NAMESPACE_ARGOCD }}" \
-              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
-            if [ -n "$IP" ]; then
-              echo "ip=$IP" >> "$GITHUB_OUTPUT"
-              echo "ArgoCD endpoint: $IP"
-              break
-            fi
-            echo "Attempt $i/36 — waiting 10s..."
-            sleep 10
-          done
-          if [ -z "$IP" ]; then
-            echo "::error::ArgoCD LoadBalancer did not get an external IP/hostname after 6 minutes"
-            exit 1
-          fi
-
-      # ── Register GitHub repo credentials with ArgoCD ───────────────────────
-      # Creates a Kubernetes secret with ArgoCD's repository label so ArgoCD
-      # can pull manifests from the private GitOps repo without CLI interaction.
-      # Requires secret: ARGOCD_GITHUB_PAT (repo read scope is sufficient)
-      - name: Register GitOps repo credentials
-        if: github.event.inputs.action != 'uninstall'
-        run: |
-          # Use jq to inject the ArgoCD label — more reliable than kubectl label --local pipe.
-          # jq is pre-installed on all GitHub Actions ubuntu runners.
-          kubectl create secret generic argocd-repo-ai-rentalapp-ledger \
-            --namespace "${{ env.NAMESPACE_ARGOCD }}" \
-            --from-literal=type=git \
-            --from-literal=url=https://github.com/techwizard-platformlab/AI-RentalApp-Ledger \
-            --from-literal=username=techwizard-platformlab \
-            --from-literal=password="$ARGOCD_GITHUB_PAT" \
-            --dry-run=client -o json \
-          | jq '.metadata.labels["argocd.argoproj.io/secret-type"] = "repository"' \
-          | kubectl apply -f -
-
-      # ── Apply AppProject ────────────────────────────────────────────────────
-      - name: Apply ArgoCD AppProject
-        if: github.event.inputs.action != 'uninstall' && github.event.inputs.action != 'apply-addons'
-        run: |
-          kubectl apply -f platform/gitops/argocd/apps/appproject.yaml
-
-      # ── Apply Application (with ACR login server substituted) ───────────────
-      - name: Apply ArgoCD Application
-        if: github.event.inputs.action != 'uninstall' && github.event.inputs.action != 'apply-addons'
-        run: |
-          ACR_SERVER="${{ steps.acr.outputs.login_server }}"
-          sed "s|ACR_LOGIN_SERVER|${ACR_SERVER}|g" \
-            platform/gitops/argocd/apps/app-${{ github.event.inputs.environment }}.yaml \
-            | kubectl apply -f -
-
-      # ── Apply Platform Add-ons via ArgoCD ────────────────────────────────────
-      # Creates ArgoCD Application CRDs — ArgoCD then handles Helm install automatically.
-      # Grafana admin password is fetched from Key Vault and stored as a K8s Secret
-      # before the Application is applied so Grafana can start up without manual intervention.
-      - name: Create Grafana admin secret from Key Vault
-        if: |
-          github.event.inputs.action == 'apply-addons' &&
-          (github.event.inputs.addons == 'all' || github.event.inputs.addons == 'prometheus')
-        run: |
-          ENV="${{ github.event.inputs.environment }}"
-          ENV_RG="my-Rental-App-${ENV^}"
-          KV_NAME=$(az keyvault list \
-            --resource-group "$ENV_RG" \
-            --query "[0].name" -o tsv)
-
-          # Fetch Grafana password — auto-generate and store if not yet set
-          GRAFANA_PASS=$(az keyvault secret show \
-            --vault-name "$KV_NAME" --name "grafana-admin-password" \
-            --query value -o tsv 2>/dev/null || echo "")
-
-          if [ -z "$GRAFANA_PASS" ]; then
-            GRAFANA_PASS=$(openssl rand -base64 24 | tr -d '/+=')
-            az keyvault secret set \
-              --vault-name "$KV_NAME" \
-              --name "grafana-admin-password" \
-              --value "$GRAFANA_PASS" \
-              --output none
-            echo "Generated and stored new Grafana admin password in Key Vault."
-          else
-            echo "Using existing Grafana admin password from Key Vault."
-          fi
-
-          kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
-
-          kubectl create secret generic grafana-admin-secret \
-            --namespace monitoring \
-            --from-literal=admin-user=admin \
-            --from-literal=admin-password="$GRAFANA_PASS" \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-          echo "::notice::Grafana admin password stored in Key Vault secret: grafana-admin-password"
-
-      - name: Apply platform AppProject
-        if: github.event.inputs.action == 'apply-addons'
-        run: |
-          kubectl apply -f platform/gitops/argocd/apps/platform-project.yaml
-
-      - name: Deploy Istio via ArgoCD
-        if: |
-          github.event.inputs.action == 'apply-addons' &&
-          (github.event.inputs.addons == 'all' || github.event.inputs.addons == 'istio')
-        run: |
-          # Wave 0 — CRDs
-          kubectl apply -f platform/gitops/argocd/apps/istio-base-app.yaml
-
-          echo "Waiting for istio-base CRDs to be established..."
-          for i in $(seq 1 24); do
-            CRD_COUNT=$(kubectl get crd 2>/dev/null | grep -c "istio.io" || true)
-            if [ "$CRD_COUNT" -ge 10 ]; then
-              echo "Istio CRDs ready ($CRD_COUNT found)"
-              break
-            fi
-            echo "Attempt $i/24 — $CRD_COUNT Istio CRDs found, waiting 15s..."
-            sleep 15
-          done
-
-          # Wave 1 — control plane
-          kubectl apply -f platform/gitops/argocd/apps/istiod-app.yaml
-
-          echo "Waiting for istiod to be ready..."
-          kubectl rollout status deployment/istiod \
-            -n istio-system --timeout=5m || true
-
-          # Wave 2 — ingress gateway
-          kubectl apply -f platform/gitops/argocd/apps/istio-gateway-app.yaml
-
-          echo "Waiting for Istio ingress gateway LoadBalancer IP..."
-          for i in $(seq 1 36); do
-            ISTIO_IP=$(kubectl get svc istio-ingressgateway \
-              -n istio-system \
-              -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
-            [ -z "$ISTIO_IP" ] && ISTIO_IP=$(kubectl get svc istio-ingressgateway \
-              -n istio-system \
-              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
-            if [ -n "$ISTIO_IP" ]; then
-              echo "istio_ip=$ISTIO_IP" >> "$GITHUB_OUTPUT"
-              echo "Istio gateway: $ISTIO_IP"
-              break
-            fi
-            echo "Attempt $i/36 — waiting 10s..."
-            sleep 10
-          done
-
-          # Wave 3 — networking resources (VirtualServices, DestinationRules, etc.)
-          kubectl apply -f platform/gitops/argocd/apps/istio-networking-app.yaml
-
-          echo "::notice::Istio fully deployed — gateway IP: ${ISTIO_IP:-pending}"
-        id: istio_deploy
-
-      - name: Create Alertmanager config secret
-        if: |
-          github.event.inputs.action == 'apply-addons' &&
-          (github.event.inputs.addons == 'all' || github.event.inputs.addons == 'prometheus')
-        env:
-          DISCORD_WEBHOOK_SECRET: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: |
-          ENV="${{ github.event.inputs.environment }}"
-          ENV_RG="my-Rental-App-${ENV^}"
-          KV_NAME=$(az keyvault list \
-            --resource-group "$ENV_RG" \
-            --query "[0].name" -o tsv)
-
-          if [ -n "$DISCORD_WEBHOOK_SECRET" ]; then
-            echo "::add-mask::$DISCORD_WEBHOOK_SECRET"
-            DISCORD_URL="$DISCORD_WEBHOOK_SECRET"
-          else
-            DISCORD_URL=$(az keyvault secret show --vault-name "$KV_NAME" \
-              --name "discord-webhook-url" --query value -o tsv 2>/dev/null || echo "")
-            [ -n "$DISCORD_URL" ] && echo "::add-mask::$DISCORD_URL"
-          fi
-
-          kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
-
-          # Substitute env vars into alertmanager config and create secret
-          ALERTMANAGER_CONFIG=$(sed \
-            -e "s|\${DISCORD_WEBHOOK_URL}|${DISCORD_URL}|g" \
-            -e "s|\${ALERT_EMAIL_TO}|alerts@rentalapp.io|g" \
-            -e "s|\${SMTP_HOST}|smtp.example.com|g" \
-            -e "s|\${SMTP_USERNAME}|alerts@rentalapp.io|g" \
-            -e "s|\${SMTP_PASSWORD}|placeholder|g" \
-            platform/observability/monitoring/alertmanager-config.yaml)
-
-          kubectl create secret generic alertmanager-config-secret \
-            --namespace monitoring \
-            --from-literal=alertmanager.yaml="$ALERTMANAGER_CONFIG" \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-          echo "Alertmanager config secret created."
-
-      - name: Deploy Prometheus/Grafana via ArgoCD
-        if: |
-          github.event.inputs.action == 'apply-addons' &&
-          (github.event.inputs.addons == 'all' || github.event.inputs.addons == 'prometheus')
-        run: |
-          kubectl apply -f platform/gitops/argocd/apps/prometheus-app.yaml
-          echo "::notice::kube-prometheus-stack submitted to ArgoCD — sync takes ~3-5 minutes"
-
-      - name: Add-ons summary
-        if: github.event.inputs.action == 'apply-addons'
-        run: |
-          ADDONS="${{ github.event.inputs.addons }}"
-          ISTIO_IP="${{ steps.istio_deploy.outputs.istio_ip }}"
-          ARGOCD_IP=$(kubectl get svc argocd-server -n "${{ env.NAMESPACE_ARGOCD }}" \
-            -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "unknown")
-
-          echo "## Platform Add-ons — ${{ github.event.inputs.environment }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Add-on | Status | Namespace |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|--------|--------|-----------|" >> "$GITHUB_STEP_SUMMARY"
-          if [[ "$ADDONS" == "all" || "$ADDONS" == "istio" ]]; then
-            echo "| Istio base (CRDs) | Syncing via ArgoCD | \`istio-system\` |" >> "$GITHUB_STEP_SUMMARY"
-            echo "| istiod (control plane) | Syncing via ArgoCD | \`istio-system\` |" >> "$GITHUB_STEP_SUMMARY"
-            echo "| Istio ingress gateway | Syncing via ArgoCD | \`istio-system\` |" >> "$GITHUB_STEP_SUMMARY"
-            echo "| Istio networking (VS/DR/AuthZ) | Syncing via ArgoCD | \`rental-dev\` |" >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [[ "$ADDONS" == "all" || "$ADDONS" == "prometheus" ]]; then
-            echo "| Prometheus + Grafana + Alertmanager | Syncing via ArgoCD | \`monitoring\` |" >> "$GITHUB_STEP_SUMMARY"
-          fi
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-
-          if [[ "$ADDONS" == "all" || "$ADDONS" == "istio" ]]; then
-            echo "### Istio Ingress Gateway" >> "$GITHUB_STEP_SUMMARY"
-            echo "| Endpoint | URL |" >> "$GITHUB_STEP_SUMMARY"
-            echo "|----------|-----|" >> "$GITHUB_STEP_SUMMARY"
-            echo "| Frontend | http://${ISTIO_IP:-pending}/ |" >> "$GITHUB_STEP_SUMMARY"
-            echo "| API | http://${ISTIO_IP:-pending}/api/v1/ |" >> "$GITHUB_STEP_SUMMARY"
-            echo "| ArgoCD UI | http://${ARGOCD_IP} |" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "### Restart pods to inject Istio sidecars" >> "$GITHUB_STEP_SUMMARY"
-            echo "\`\`\`bash" >> "$GITHUB_STEP_SUMMARY"
-            echo "kubectl rollout restart deployment -n rental-dev" >> "$GITHUB_STEP_SUMMARY"
-            echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-          if [[ "$ADDONS" == "all" || "$ADDONS" == "prometheus" ]]; then
-            echo "### Access Grafana" >> "$GITHUB_STEP_SUMMARY"
-            echo "\`\`\`bash" >> "$GITHUB_STEP_SUMMARY"
-            echo "kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80" >> "$GITHUB_STEP_SUMMARY"
-            echo "# Open: http://localhost:3000  (admin / password from Key Vault: grafana-admin-password)" >> "$GITHUB_STEP_SUMMARY"
-            echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      # ── Uninstall ───────────────────────────────────────────────────────────
-      - name: Uninstall ArgoCD
-        if: github.event.inputs.action == 'uninstall'
-        run: |
-          helm uninstall argocd --namespace "${{ env.NAMESPACE_ARGOCD }}" || true
-          kubectl delete namespace "${{ env.NAMESPACE_ARGOCD }}" --ignore-not-found
-
-      # ── Summary ─────────────────────────────────────────────────────────────
-      - name: Get ArgoCD initial admin password
-        if: github.event.inputs.action == 'install' || github.event.inputs.action == 'apply-apps'
+      # ── Summary ───────────────────────────────────────────────────────────
+      - name: ArgoCD admin password
+        if: contains(fromJSON('["install","apply-apps"]'), env.ACTION)
         id: argocd_pass
         run: |
           PASS=$(kubectl get secret argocd-initial-admin-secret \
@@ -620,43 +153,36 @@ jobs:
           echo "::add-mask::$PASS"
           echo "password=$PASS" >> "$GITHUB_OUTPUT"
 
-      - name: Get ArgoCD LoadBalancer IP (apply-apps)
-        if: github.event.inputs.action == 'apply-apps'
-        id: argocd_ip_apply
-        run: |
-          IP=$(kubectl get svc argocd-server -n "${{ env.NAMESPACE_ARGOCD }}" \
-            -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
-          [ -z "$IP" ] && IP=$(kubectl get svc argocd-server -n "${{ env.NAMESPACE_ARGOCD }}" \
-            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
-          echo "ip=${IP:-unknown}" >> "$GITHUB_OUTPUT"
-
       - name: Job summary
         if: always()
         run: |
-          ARGOCD_IP="${{ steps.argocd_ip.outputs.ip }}${{ steps.argocd_ip_apply.outputs.ip }}"
-          echo "## ArgoCD Bootstrap — ${{ github.event.inputs.environment }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Action | ${{ github.event.inputs.action }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Environment | ${{ github.event.inputs.environment }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| AKS Cluster | ${{ env.AKS_NAME }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| ACR | ${{ steps.acr.outputs.login_server }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| ArgoCD UI | http://${ARGOCD_IP} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| ArgoCD Username | admin |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| ArgoCD Password | See Kubernetes secret \`argocd-initial-admin-secret\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### Next steps" >> "$GITHUB_STEP_SUMMARY"
-          echo "1. Open https://${ARGOCD_IP} in your browser (accept cert warning)" >> "$GITHUB_STEP_SUMMARY"
-          echo "2. Login with admin / retrieve password from the Kubernetes secret" >> "$GITHUB_STEP_SUMMARY"
-          echo "3. GitOps repo is already registered — app should show Synced" >> "$GITHUB_STEP_SUMMARY"
-          echo "4. Run the CI workflow (techwizard-platformlab/RentalApp-Build) with registry: acr to push the first image" >> "$GITHUB_STEP_SUMMARY"
-          echo "5. ArgoCD will auto-sync and deploy the app" >> "$GITHUB_STEP_SUMMARY"
+          CLOUD="${{ env.CLOUD }}"
+          ENV="${{ env.ENV }}"
+          ACTION="${{ env.ACTION }}"
+          ARGOCD_IP="${{ steps.bootstrap.outputs.argocd_ip }}${{ steps.bootstrap_gcp.outputs.argocd_ip }}"
 
+          {
+            echo "## ArgoCD Bootstrap — ${ACTION} / ${CLOUD} / ${ENV}"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Cloud | ${CLOUD} |"
+            echo "| Environment | ${ENV} |"
+            echo "| Action | ${ACTION} |"
+            echo "| DB Mode | ${{ env.DB_MODE }} |"
+            echo "| ArgoCD UI | http://${ARGOCD_IP:-pending} |"
+            echo ""
+            echo "### Next steps"
+            echo "1. Open https://${ARGOCD_IP:-\<IP\>} (accept cert warning)"
+            echo "2. Login: admin / retrieve password from \`argocd-initial-admin-secret\`"
+            echo "3. GitOps repo is registered — app should show Synced"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ── Discord notification ──────────────────────────────────────────────
       - name: Notify Discord
         if: always() && env.DISCORD_WEBHOOK_URL != ''
         uses: sarisia/actions-status-discord@eb045afee445dc055c18d3d90bd0f244fd062708  # v1
         with:
           webhook: ${{ env.DISCORD_WEBHOOK_URL }}
-          status: ${{ job.status }}
-          title: "ArgoCD Bootstrap — ${{ github.event.inputs.action }} (${{ github.event.inputs.environment }})"
+          status:  ${{ job.status }}
+          title:   "ArgoCD Bootstrap — ${{ env.ACTION }} (${{ env.CLOUD }}/${{ env.ENV }})"

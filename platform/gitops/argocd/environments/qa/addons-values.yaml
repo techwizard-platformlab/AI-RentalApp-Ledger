@@ -1,0 +1,18 @@
+# Platform add-ons values — qa environment
+global:
+  environment: qa
+  cloud: azure   # override to 'gcp' for GCP cluster
+
+istio:
+  enabled: true
+  baseVersion: "1.20.0"
+  istiodVersion: "1.20.0"
+  gatewayVersion: "1.20.0"
+
+prometheus:
+  enabled: true
+  storageSize: "10Gi"
+  retention: "7d"
+
+externalSecrets:
+  enabled: true

@@ -1,20 +1,20 @@
 name: "Infra"
 
 # =============================================================================
-# Unified infrastructure workflow — plan / apply / destroy / schedule.
+# Unified infrastructure workflow — plan / apply / destroy.
 #
 # Triggers
-#   workflow_dispatch → manual: choose action, cloud, env, scope
-#   schedule          → automated dev lifecycle (Saturday apply, Sunday destroy)
+#   pull_request_target → auto plan preview on infrastructure PRs
+#   workflow_dispatch   → manual: choose action, cloud, env, scope
 #
 # Actions
 #   plan    → terraform plan + OPA cost check (tf_plan_cost.rego)
 #   apply   → uses saved plan binary (exact approved plan)
 #   destroy → compute-only (AKS/GKE + VNet, keeps ACR/SQL/KV) or full
+#             NOTE: always manual — no scheduled destroy
 #
 # Approval gates  (ALL apply and destroy require human approval)
 #   Manual apply/destroy → pauses at "terraform-destructive-approval" environment
-#   Scheduled runs       → skip approval gate (no human available — intentional)
 #   Non-dev operations   → confirm field must match env name before gate fires
 #
 # Auth
@@ -22,10 +22,8 @@ name: "Infra"
 #   GCP   → OIDC (workload identity)
 #
 # Public-repo security
-#   PR trigger uses pull_request_target restricted to the base branch (main).
-#   Fork PRs are allowed to trigger a plan-only run but CANNOT access secrets
-#   because the workflow checks github.event.pull_request.head.repo.fork and
-#   exits early if true. Apply and destroy are workflow_dispatch-only.
+#   Fork PRs can trigger plan-only but cannot access secrets (fork check below).
+#   Apply and destroy are workflow_dispatch-only.
 #
 # Setup (one-time)
 #   repo Settings → Environments → create "terraform-destructive-approval"
@@ -33,10 +31,8 @@ name: "Infra"
 # =============================================================================
 
 on:
-  # Pull-request plan preview — uses pull_request_target so the workflow runs
-  # in the context of the BASE branch (main), not the PR branch.
-  # This means secrets are available for internal contributors but
-  # the fork-protection check below ensures forks still cannot access them.
+  # Pull-request plan preview — runs in the context of the BASE branch (main)
+  # so secrets are available for internal contributors; forks are blocked below.
   pull_request_target:
     types: [opened, synchronize, reopened]
     branches: [main]
@@ -44,12 +40,6 @@ on:
       - "infrastructure/**"
       - "platform/security/policies/**"
       - ".github/workflows/terraform.yml"
-
-  # push:
-  #   branches: [main, "feature/**", "fix/**", "hotfix/**"]
-  #   paths:
-  #     - "infrastructure/**"
-  #     - ".github/workflows/terraform.yml"
 
   workflow_dispatch:
     inputs:
@@ -82,16 +72,10 @@ on:
         options: [compute-only, full]
 
       confirm:
-        description: "For apply/destroy on non-dev: type the environment name"
+        description: "For apply/destroy: type the environment name to confirm"
         required: false
         default: ""
         type: string
-
-  schedule:
-    # Sunday 18:00 UTC (23:30 IST) — destroy dev compute to stop billing
-    - cron: "0 18 * * 0"
-    # Saturday 02:00 UTC (07:30 IST) — recreate dev compute for weekend session
-    - cron: "0 2  * * 6"
 
 concurrency:
   group: terraform-${{ github.event.inputs.target_env || 'dev' }}-${{ github.ref }}
@@ -117,7 +101,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       env:       ${{ steps.resolve.outputs.env }}
-      env_rg:    ${{ steps.resolve.outputs.env_rg }}
       action:    ${{ steps.resolve.outputs.action }}
       scope:     ${{ steps.resolve.outputs.scope }}
       run_azure: ${{ steps.resolve.outputs.run_azure }}
@@ -141,48 +124,13 @@ jobs:
         run: |
           TRIGGER="${{ github.event_name }}"
 
-          if [ "$TRIGGER" = "schedule" ]; then
-            # Saturday (6) → apply (recreate)  |  Sunday (0) → destroy compute-only
-            DAY=$(date -u +%w)   # 0=Sunday, 6=Saturday
-            if [ "$DAY" = "0" ]; then
-              echo "action=destroy"       >> $GITHUB_OUTPUT
-              echo "scope=compute-only"  >> $GITHUB_OUTPUT
-            else
-              echo "action=apply"        >> $GITHUB_OUTPUT
-              echo "scope=full"          >> $GITHUB_OUTPUT
-            fi
-            echo "env=dev"                   >> $GITHUB_OUTPUT
-            echo "env_rg=my-Rental-App-Dev"  >> $GITHUB_OUTPUT
-            echo "run_azure=true"            >> $GITHUB_OUTPUT
-            echo "run_gcp=true"              >> $GITHUB_OUTPUT
-            echo "scheduled=true"            >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
           if [ "$TRIGGER" = "pull_request_target" ]; then
-            echo "env=dev"                   >> $GITHUB_OUTPUT
-            echo "env_rg=my-Rental-App-Dev"  >> $GITHUB_OUTPUT
-            echo "action=plan"               >> $GITHUB_OUTPUT
-            echo "scope=full"                >> $GITHUB_OUTPUT
-            echo "run_azure=true"            >> $GITHUB_OUTPUT
-            echo "run_gcp=false"             >> $GITHUB_OUTPUT
-            echo "scheduled=false"           >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          if [ "$TRIGGER" = "push" ]; then
-            BRANCH="${{ github.ref_name }}"
-            echo "env=dev"                   >> $GITHUB_OUTPUT
-            echo "env_rg=my-Rental-App-Dev"  >> $GITHUB_OUTPUT
-            echo "scope=full"                >> $GITHUB_OUTPUT
-            echo "run_azure=true"            >> $GITHUB_OUTPUT
-            echo "run_gcp=false"             >> $GITHUB_OUTPUT
-            echo "scheduled=false"           >> $GITHUB_OUTPUT
-            if [ "$BRANCH" = "main" ]; then
-              echo "action=apply"  >> $GITHUB_OUTPUT
-            else
-              echo "action=plan"   >> $GITHUB_OUTPUT
-            fi
+            echo "env=dev"         >> $GITHUB_OUTPUT
+            echo "action=plan"     >> $GITHUB_OUTPUT
+            echo "scope=full"      >> $GITHUB_OUTPUT
+            echo "run_azure=true"  >> $GITHUB_OUTPUT
+            echo "run_gcp=false"   >> $GITHUB_OUTPUT
+            echo "scheduled=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
@@ -194,39 +142,20 @@ jobs:
           CONFIRM="${{ github.event.inputs.confirm }}"
 
           # Safety: apply/destroy requires confirm field = env name
-          if [ "$ACTION" != "plan" ]; then
-            if [ "$CONFIRM" != "$ENV" ]; then
-              echo "ERROR: For $ACTION on $ENV you must type the environment name in the confirm field."
-              exit 1
-            fi
+          if [ "$ACTION" != "plan" ] && [ "$CONFIRM" != "$ENV" ]; then
+            echo "ERROR: For $ACTION on $ENV you must type the environment name in the confirm field."
+            exit 1
           fi
 
-          # Resolve env-specific resource group name
-          case "$ENV" in
-            dev)  ENV_RG="my-Rental-App-Dev"  ;;
-            qa)   ENV_RG="my-Rental-App-QA"   ;;
-            uat)  ENV_RG="my-Rental-App-UAT"  ;;
-            prod) ENV_RG="my-Rental-App-Prod" ;;
-            *)    ENV_RG="my-Rental-App-Dev"  ;;
-          esac
-
           echo "env=$ENV"           >> $GITHUB_OUTPUT
-          echo "env_rg=$ENV_RG"     >> $GITHUB_OUTPUT
           echo "action=$ACTION"     >> $GITHUB_OUTPUT
           echo "scope=$SCOPE"       >> $GITHUB_OUTPUT
           echo "scheduled=false"    >> $GITHUB_OUTPUT
 
-          if [ "$CLOUD" = "azure" ] || [ "$CLOUD" = "both" ]; then
-            echo "run_azure=true"  >> $GITHUB_OUTPUT
-          else
-            echo "run_azure=false" >> $GITHUB_OUTPUT
-          fi
-
-          if [ "$CLOUD" = "gcp" ] || [ "$CLOUD" = "both" ]; then
-            echo "run_gcp=true"  >> $GITHUB_OUTPUT
-          else
-            echo "run_gcp=false" >> $GITHUB_OUTPUT
-          fi
+          [ "$CLOUD" = "azure" ] || [ "$CLOUD" = "both" ] && \
+            echo "run_azure=true" >> $GITHUB_OUTPUT || echo "run_azure=false" >> $GITHUB_OUTPUT
+          [ "$CLOUD" = "gcp" ]   || [ "$CLOUD" = "both" ] && \
+            echo "run_gcp=true"  >> $GITHUB_OUTPUT || echo "run_gcp=false"  >> $GITHUB_OUTPUT
 
   # ===========================================================================
   # AZURE — Plan
@@ -255,7 +184,7 @@ jobs:
       ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_env_resource_group_name:      ${{ needs.setup.outputs.env_rg }}
+      TF_VAR_environment:                  ${{ needs.setup.outputs.env }}
       TF_VAR_github_actions_principal_id:  ${{ secrets.TF_GITHUB_ACTIONS_PRINCIPAL_ID }}
 
     steps:
@@ -276,19 +205,20 @@ jobs:
 
       - name: Fetch secrets from Key Vault
         run: |
-          KV="techwizard-plt-kv"
-          DISCORD=$(az keyvault secret show --vault-name "$KV" --name "rentalapp-discord-webhook" --query value -o tsv 2>/dev/null || true)
+          # Platform KV name resolved from secret (set during bootstrap)
+          KV="${{ secrets.PLATFORM_KV_NAME }}"
+          DISCORD=$(az keyvault secret show --vault-name "$KV" --name "discord-webhook-url" --query value -o tsv 2>/dev/null || true)
           if [[ -n "$DISCORD" ]]; then
             echo "::add-mask::$DISCORD"
             echo "DISCORD_WEBHOOK_URL=$DISCORD" >> "$GITHUB_ENV"
           fi
-          
+
           GH_PAT=$(az keyvault secret show --vault-name "$KV" --name "github-pat" --query value -o tsv 2>/dev/null || true)
           if [[ -n "$GH_PAT" ]]; then
             echo "::add-mask::$GH_PAT"
             echo "TF_VAR_github_token=$GH_PAT" >> "$GITHUB_ENV"
           else
-            echo "::error::Failed to fetch github-pat from Key Vault"
+            echo "::error::Failed to fetch github-pat from Key Vault $KV"
             exit 1
           fi
 
@@ -404,8 +334,9 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const plan = fs.existsSync('infrastructure/azure/environments/${{ needs.setup.outputs.env }}/plan.txt')
-              ? fs.readFileSync('infrastructure/azure/environments/${{ needs.setup.outputs.env }}/plan.txt', 'utf8').slice(-60000)
+            const planPath = `infrastructure/azure/environments/${{ needs.setup.outputs.env }}/plan.txt`;
+            const plan = fs.existsSync(planPath)
+              ? fs.readFileSync(planPath, 'utf8').slice(-60000)
               : 'Plan unavailable';
             const icon = s => s === 'success' ? 'OK' : s === 'failure' ? 'FAIL' : 'SKIP';
             const hasDestroys = '${{ steps.check_destroys.outputs.has_destroys }}' === 'true';
@@ -535,7 +466,7 @@ jobs:
       ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_env_resource_group_name:      ${{ needs.setup.outputs.env_rg }}
+      TF_VAR_environment:                  ${{ needs.setup.outputs.env }}
       TF_VAR_github_actions_principal_id:  ${{ secrets.TF_GITHUB_ACTIONS_PRINCIPAL_ID }}
 
     steps:
@@ -556,19 +487,20 @@ jobs:
 
       - name: Fetch secrets from Key Vault
         run: |
-          KV="techwizard-plt-kv"
-          DISCORD=$(az keyvault secret show --vault-name "$KV" --name "rentalapp-discord-webhook" --query value -o tsv 2>/dev/null || true)
+          # Platform KV name resolved from secret (set during bootstrap)
+          KV="${{ secrets.PLATFORM_KV_NAME }}"
+          DISCORD=$(az keyvault secret show --vault-name "$KV" --name "discord-webhook-url" --query value -o tsv 2>/dev/null || true)
           if [[ -n "$DISCORD" ]]; then
             echo "::add-mask::$DISCORD"
             echo "DISCORD_WEBHOOK_URL=$DISCORD" >> "$GITHUB_ENV"
           fi
-          
+
           GH_PAT=$(az keyvault secret show --vault-name "$KV" --name "github-pat" --query value -o tsv 2>/dev/null || true)
           if [[ -n "$GH_PAT" ]]; then
             echo "::add-mask::$GH_PAT"
             echo "TF_VAR_github_token=$GH_PAT" >> "$GITHUB_ENV"
           else
-            echo "::error::Failed to fetch github-pat from Key Vault"
+            echo "::error::Failed to fetch github-pat from Key Vault $KV"
             exit 1
           fi
 

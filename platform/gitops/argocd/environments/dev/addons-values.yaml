@@ -1,0 +1,18 @@
+# Platform add-ons values — dev environment
+global:
+  environment: dev
+  cloud: azure   # override to 'gcp' for GCP cluster
+
+istio:
+  enabled: true
+  baseVersion: "1.20.0"
+  istiodVersion: "1.20.0"
+  gatewayVersion: "1.20.0"
+
+prometheus:
+  enabled: true
+  storageSize: "5Gi"
+  retention: "3d"      # shorter retention in dev to save storage
+
+externalSecrets:
+  enabled: true

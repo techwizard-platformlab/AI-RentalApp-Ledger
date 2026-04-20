@@ -1,27 +1,74 @@
-# Infracost configuration file
-# Get a free API key: https://www.infracost.io/docs/#2-get-api-key
-# Set as INFRACOST_API_KEY environment variable or GitHub secret
+# Infracost configuration — multi-cloud, multi-environment
+# Docs: https://www.infracost.io/docs/features/config_file/
+#
+# Usage:
+#   INFRACOST_API_KEY=<key> infracost breakdown --config-file .infracost/config.yml
+#
+# Filter by cloud / env via INFRACOST_PROJECTS env var or --projects flag:
+#   infracost breakdown --config-file .infracost/config.yml --filter-name azure-dev
+#
+# Cost pattern:
+#   Deploy-destroy model: 3-4 hrs/day × 22 working days ≈ 88 hrs/month
+#   OPA deny: $22/month | warn: $15/month  (set in platform/security/policies/cost/)
 
 version: 0.1
 
 projects:
+
+  # ── Azure ─────────────────────────────────────────────────────────────────
   - path: infrastructure/azure/environments/dev
     name: azure-dev
+    env:
+      TF_VAR_environment: dev
     terraform_var_files:
       - terraform.tfvars
 
+  - path: infrastructure/azure/environments/qa
+    name: azure-qa
+    env:
+      TF_VAR_environment: qa
+    terraform_var_files:
+      - terraform.tfvars
+
+  - path: infrastructure/azure/environments/uat
+    name: azure-uat
+    env:
+      TF_VAR_environment: uat
+    terraform_var_files:
+      - terraform.tfvars
+
+  - path: infrastructure/azure/environments/prod
+    name: azure-prod
+    env:
+      TF_VAR_environment: prod
+    terraform_var_files:
+      - terraform.tfvars
+
+  # ── GCP ───────────────────────────────────────────────────────────────────
   - path: infrastructure/gcp/environments/dev
     name: gcp-dev
+    env:
+      TF_VAR_environment: dev
     terraform_var_files:
       - terraform.tfvars
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Deploy-destroy cost pattern: 3-4 hrs/day × 22 working days = 88 hrs/month
-# Budget: 400 INR (~$5 USD) per week per cloud
-#
-# Keep costs down:
-# - Destroy AKS/GKE after each session (ci-cd/scripts/destroy-compute.sh)
-# - ACR and SQL persist (cheap daily billing, data retained)
-# - Run only ONE cloud at a time
-# - OPA deny threshold: $22/month | warn: $15/month
-# ─────────────────────────────────────────────────────────────────────────────
+  - path: infrastructure/gcp/environments/qa
+    name: gcp-qa
+    env:
+      TF_VAR_environment: qa
+    terraform_var_files:
+      - terraform.tfvars
+
+  - path: infrastructure/gcp/environments/uat
+    name: gcp-uat
+    env:
+      TF_VAR_environment: uat
+    terraform_var_files:
+      - terraform.tfvars
+
+  - path: infrastructure/gcp/environments/prod
+    name: gcp-prod
+    env:
+      TF_VAR_environment: prod
+    terraform_var_files:
+      - terraform.tfvars
