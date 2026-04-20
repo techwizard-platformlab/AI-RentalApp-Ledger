@@ -1,0 +1,43 @@
+# platform/gitops/argocd/environments/dev/values.yaml
+# Azure-specific overrides for dev environment
+# Used by: helm template ... platform/gitops/argocd/charts/rental-app --values this-file
+
+environment: dev
+cloud: azure
+namespace: rental-dev
+
+repoURL: "https://github.com/techwizard-platformlab/RentalApp-Build"
+targetRevision: main
+
+# ArgoCD project scoping
+project:
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: apps
+      kind: Deployment
+    - group: networking.istio.io
+      kind: VirtualService
+
+# Application sync settings
+syncPolicy:
+  automated:
+    prune: true
+    selfHeal: true
+  syncOptions:
+    - CreateNamespace=true
+
+# Image updater annotations (Azure ACR)
+imageUpdater:
+  enabled: true
+  image: rental-api
+  updateStrategy: semver
+  # ACR server resolved at deploy time via Key Vault
+  registrySecret: acr-pull-secret
+
+# Health check overrides for dev (relaxed)
+ignoreDifferences:
+  - group: apps
+    kind: Deployment
+    jsonPointers:
+      - /spec/replicas

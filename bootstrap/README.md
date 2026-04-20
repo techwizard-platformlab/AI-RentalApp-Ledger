@@ -1,23 +1,36 @@
 # Bootstrap — One-time Cloud Setup
 
-Run **once** per subscription/project before any Terraform work. All steps are idempotent — safe to re-run.
+Run **once** per cloud subscription/project before any Terraform work. All steps are idempotent — safe to re-run.
+
+Supports: **Azure** and **GCP**.
 
 ---
 
 ## Resource Group Model
+
+### Azure
 
 ```
 PLATFORM_RG  (shared across ALL your apps — pre-existing, you created this)
   ├── Managed Identity    ← GitHub Actions authenticates as this
   └── Key Vault           ← all secrets live here (shared + app-scoped)
 
-AZURE_SHARED_RG  (this project only — my-Rental-App)
-  ├── ACR                 ← container registry for AI-RentalApp-Ledger
+AZURE_SHARED_RG  (this project only)
+  ├── ACR                 ← container registry
   └── Terraform state SA  ← tfstate blobs
 
-my-Rental-App-Dev / QA   (Terraform-owned — safe to destroy)
+<your-app>-Dev / QA      (Terraform-owned — safe to destroy)
   ├── AKS, VNet, PostgreSQL, Storage
   └── Per-env Key Vault   ← app runtime secrets (DB passwords, ACR URL)
+```
+
+### GCP
+
+```
+GCP_PROJECT_ID  (your project)
+  ├── Workload Identity Pool   ← GitHub Actions authenticates via OIDC
+  ├── Secret Manager           ← all secrets
+  └── Artifact Registry        ← container images
 ```
 
 ## Secret Management Model
@@ -80,11 +93,20 @@ az identity show --name <mi-name> \
 ## Phase 2 — Run bootstrap (creates Terraform state storage)
 
 ```bash
+# Azure
 az login
-bash bootstrap/bootstrap.sh
+CLOUD=azure bash bootstrap/bootstrap.sh
 
-# → Creates storage account in AZURE_SHARED_RG (my-Rental-App)
-# → Adds OIDC federated credentials to the Managed Identity in PLATFORM_RG
+# GCP
+gcloud auth login && gcloud config set project <your-project-id>
+CLOUD=gcp bash bootstrap/bootstrap.sh
+
+# Both clouds
+CLOUD=both bash bootstrap/bootstrap.sh
+
+# → Azure: creates storage account in AZURE_SHARED_RG
+# → Azure: adds OIDC federated credentials to the Managed Identity in PLATFORM_RG
+# → GCP: creates Workload Identity Pool + binds service account
 # → Prints all GitHub Secrets values at the end
 ```
 

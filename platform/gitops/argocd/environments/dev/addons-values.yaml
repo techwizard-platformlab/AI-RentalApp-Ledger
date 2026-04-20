@@ -1,0 +1,24 @@
+# platform/gitops/argocd/environments/dev/addons-values.yaml
+# Platform add-ons (Istio + Prometheus) overrides for dev
+
+environment: dev
+
+istio:
+  enabled: true
+  version: "1.22.0"
+  pilot:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
+prometheus:
+  enabled: true
+  grafana:
+    enabled: true
+    adminPasswordSecret: kube-prometheus-stack-grafana
+  alertmanager:
+    enabled: true
+    discordWebhookSecret: alertmanager-discord-secret
+  retention: 7d
+  storageSize: 8Gi

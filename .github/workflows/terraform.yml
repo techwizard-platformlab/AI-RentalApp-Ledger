@@ -87,12 +87,6 @@ on:
         default: ""
         type: string
 
-  schedule:
-    # Sunday 18:00 UTC (23:30 IST) — destroy dev compute to stop billing
-    - cron: "0 18 * * 0"
-    # Saturday 02:00 UTC (07:30 IST) — recreate dev compute for weekend session
-    - cron: "0 2  * * 6"
-
 concurrency:
   group: terraform-${{ github.event.inputs.target_env || 'dev' }}-${{ github.ref }}
   cancel-in-progress: false
@@ -117,7 +111,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       env:       ${{ steps.resolve.outputs.env }}
-      env_rg:    ${{ steps.resolve.outputs.env_rg }}
       action:    ${{ steps.resolve.outputs.action }}
       scope:     ${{ steps.resolve.outputs.scope }}
       run_azure: ${{ steps.resolve.outputs.run_azure }}
@@ -141,43 +134,23 @@ jobs:
         run: |
           TRIGGER="${{ github.event_name }}"
 
-          if [ "$TRIGGER" = "schedule" ]; then
-            # Saturday (6) → apply (recreate)  |  Sunday (0) → destroy compute-only
-            DAY=$(date -u +%w)   # 0=Sunday, 6=Saturday
-            if [ "$DAY" = "0" ]; then
-              echo "action=destroy"       >> $GITHUB_OUTPUT
-              echo "scope=compute-only"  >> $GITHUB_OUTPUT
-            else
-              echo "action=apply"        >> $GITHUB_OUTPUT
-              echo "scope=full"          >> $GITHUB_OUTPUT
-            fi
-            echo "env=dev"                   >> $GITHUB_OUTPUT
-            echo "env_rg=my-Rental-App-Dev"  >> $GITHUB_OUTPUT
-            echo "run_azure=true"            >> $GITHUB_OUTPUT
-            echo "run_gcp=true"              >> $GITHUB_OUTPUT
-            echo "scheduled=true"            >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
           if [ "$TRIGGER" = "pull_request_target" ]; then
-            echo "env=dev"                   >> $GITHUB_OUTPUT
-            echo "env_rg=my-Rental-App-Dev"  >> $GITHUB_OUTPUT
-            echo "action=plan"               >> $GITHUB_OUTPUT
-            echo "scope=full"                >> $GITHUB_OUTPUT
-            echo "run_azure=true"            >> $GITHUB_OUTPUT
-            echo "run_gcp=false"             >> $GITHUB_OUTPUT
-            echo "scheduled=false"           >> $GITHUB_OUTPUT
+            echo "env=dev"           >> $GITHUB_OUTPUT
+            echo "action=plan"       >> $GITHUB_OUTPUT
+            echo "scope=full"        >> $GITHUB_OUTPUT
+            echo "run_azure=true"    >> $GITHUB_OUTPUT
+            echo "run_gcp=false"     >> $GITHUB_OUTPUT
+            echo "scheduled=false"   >> $GITHUB_OUTPUT
             exit 0
           fi
 
           if [ "$TRIGGER" = "push" ]; then
             BRANCH="${{ github.ref_name }}"
-            echo "env=dev"                   >> $GITHUB_OUTPUT
-            echo "env_rg=my-Rental-App-Dev"  >> $GITHUB_OUTPUT
-            echo "scope=full"                >> $GITHUB_OUTPUT
-            echo "run_azure=true"            >> $GITHUB_OUTPUT
-            echo "run_gcp=false"             >> $GITHUB_OUTPUT
-            echo "scheduled=false"           >> $GITHUB_OUTPUT
+            echo "env=dev"           >> $GITHUB_OUTPUT
+            echo "scope=full"        >> $GITHUB_OUTPUT
+            echo "run_azure=true"    >> $GITHUB_OUTPUT
+            echo "run_gcp=false"     >> $GITHUB_OUTPUT
+            echo "scheduled=false"   >> $GITHUB_OUTPUT
             if [ "$BRANCH" = "main" ]; then
               echo "action=apply"  >> $GITHUB_OUTPUT
             else
@@ -201,17 +174,7 @@ jobs:
             fi
           fi
 
-          # Resolve env-specific resource group name
-          case "$ENV" in
-            dev)  ENV_RG="my-Rental-App-Dev"  ;;
-            qa)   ENV_RG="my-Rental-App-QA"   ;;
-            uat)  ENV_RG="my-Rental-App-UAT"  ;;
-            prod) ENV_RG="my-Rental-App-Prod" ;;
-            *)    ENV_RG="my-Rental-App-Dev"  ;;
-          esac
-
           echo "env=$ENV"           >> $GITHUB_OUTPUT
-          echo "env_rg=$ENV_RG"     >> $GITHUB_OUTPUT
           echo "action=$ACTION"     >> $GITHUB_OUTPUT
           echo "scope=$SCOPE"       >> $GITHUB_OUTPUT
           echo "scheduled=false"    >> $GITHUB_OUTPUT
@@ -255,7 +218,7 @@ jobs:
       ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_env_resource_group_name:      ${{ needs.setup.outputs.env_rg }}
+      TF_VAR_environment:                  ${{ needs.setup.outputs.env }}
       TF_VAR_github_actions_principal_id:  ${{ secrets.TF_GITHUB_ACTIONS_PRINCIPAL_ID }}
 
     steps:
@@ -276,7 +239,7 @@ jobs:
 
       - name: Fetch secrets from Key Vault
         run: |
-          KV="techwizard-plt-kv"
+          KV="${{ secrets.PLATFORM_KV_NAME }}"
           DISCORD=$(az keyvault secret show --vault-name "$KV" --name "rentalapp-discord-webhook" --query value -o tsv 2>/dev/null || true)
           if [[ -n "$DISCORD" ]]; then
             echo "::add-mask::$DISCORD"
@@ -535,7 +498,7 @@ jobs:
       ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_env_resource_group_name:      ${{ needs.setup.outputs.env_rg }}
+      TF_VAR_environment:                  ${{ needs.setup.outputs.env }}
       TF_VAR_github_actions_principal_id:  ${{ secrets.TF_GITHUB_ACTIONS_PRINCIPAL_ID }}
 
     steps:
@@ -556,7 +519,7 @@ jobs:
 
       - name: Fetch secrets from Key Vault
         run: |
-          KV="techwizard-plt-kv"
+          KV="${{ secrets.PLATFORM_KV_NAME }}"
           DISCORD=$(az keyvault secret show --vault-name "$KV" --name "rentalapp-discord-webhook" --query value -o tsv 2>/dev/null || true)
           if [[ -n "$DISCORD" ]]; then
             echo "::add-mask::$DISCORD"

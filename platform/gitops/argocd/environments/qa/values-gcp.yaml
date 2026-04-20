@@ -1,0 +1,33 @@
+# platform/gitops/argocd/environments/qa/values-gcp.yaml
+# GCP-specific overrides for qa environment
+
+environment: qa
+cloud: gcp
+namespace: rental-qa
+
+repoURL: "https://github.com/techwizard-platformlab/RentalApp-Build"
+targetRevision: main
+
+project:
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: apps
+      kind: Deployment
+    - group: networking.istio.io
+      kind: VirtualService
+
+syncPolicy:
+  automated:
+    prune: true
+    selfHeal: false
+  syncOptions:
+    - CreateNamespace=true
+
+imageUpdater:
+  enabled: true
+  image: rental-api
+  updateStrategy: semver
+  registrySecret: ar-pull-secret
+
+ignoreDifferences: []

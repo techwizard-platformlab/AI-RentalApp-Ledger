@@ -1,0 +1,36 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qa-post-deploy-validate
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: validate
+          image: bitnami/kubectl:latest
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              NAMESPACE="rental-qa"
+              echo "Running QA post-sync validation for namespace=${NAMESPACE}…"
+
+              for deploy in $(kubectl get deploy -n "${NAMESPACE}" -o name 2>/dev/null); do
+                kubectl rollout status "${deploy}" -n "${NAMESPACE}" --timeout=180s || true
+              done
+
+              NOT_RUNNING=$(kubectl get pods -n "${NAMESPACE}" --no-headers \
+                | grep -v -E "Running|Completed" | wc -l)
+              if [[ "$NOT_RUNNING" -gt 0 ]]; then
+                echo "ERROR: ${NOT_RUNNING} pod(s) not in Running/Completed state"
+                kubectl get pods -n "${NAMESPACE}"
+                exit 1
+              fi
+
+              echo "QA post-sync validation passed"

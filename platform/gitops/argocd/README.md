@@ -1,102 +1,96 @@
 # GitOps — ArgoCD Configuration
 
+Helm-based ArgoCD configuration. Application and AppProject manifests are generated via Helm templates, not stored as static YAML — enabling multi-cloud and multi-environment support without duplication.
+
 ## Structure
 
 ```
 platform/gitops/argocd/
-├── apps/
-│   ├── appproject.yaml              # AppProject — scopes allowed repos/namespaces
-│   ├── app-dev.yaml                 # Application CRD — auto-sync to rental-dev
-│   ├── app-qa.yaml                  # Application CRD — manual sync to rental-qa
-│   ├── applicationset-multicluster.yaml  # Multi-cluster ApplicationSet (AKS + GKE)
-│   ├── health-check-config.yaml     # Custom health check rules
-│   └── notification-config.yaml     # ArgoCD Notifications — Discord triggers
-├── argocd/
-│   └── install-values.yaml          # Helm values for ArgoCD install
-├── helm/
-│   └── postgresql/
-│       └── values-dev.yaml          # Fallback in-cluster PostgreSQL (if not using Azure PG)
-└── notifications/
-    ├── argocd-notifications-cm.yaml # Notification templates + triggers ConfigMap
-    ├── argocd-notifications-secret.yaml  # Discord webhook secret template
-    └── app-notification-annotations.yaml # Per-app notification annotations
+├── charts/
+│   ├── rental-app/               # Helm chart: ArgoCD Application + AppProject
+│   │   ├── Chart.yaml
+│   │   ├── values.yaml           # Base defaults
+│   │   └── templates/
+│   │       ├── appproject.yaml   # Helm template for AppProject CRD
+│   │       └── application.yaml  # Helm template for Application CRD
+│   └── platform-addons/          # Helm chart: Istio + Prometheus ArgoCD Applications
+│       ├── Chart.yaml
+│       ├── values.yaml
+│       └── templates/
+│           ├── istio-base.yaml     # ArgoCD Application: Istio CRDs (wave 0)
+│           ├── istiod.yaml         # ArgoCD Application: istiod (wave 1)
+│           ├── istio-gateway.yaml  # ArgoCD Application: ingress gateway (wave 2)
+│           └── prometheus.yaml     # ArgoCD Application: kube-prometheus-stack
+├── environments/
+│   ├── dev/
+│   │   ├── values.yaml           # Azure dev overrides
+│   │   ├── values-gcp.yaml       # GCP dev overrides
+│   │   └── addons-values.yaml    # Istio + Prometheus dev settings
+│   └── qa/
+│       ├── values.yaml
+│       ├── values-gcp.yaml
+│       └── addons-values.yaml
+└── values/
+    ├── argocd-install.yaml       # ArgoCD Helm install values
+    └── postgresql-values.yaml    # Bitnami PostgreSQL fallback values (helm-pg mode)
 ```
 
-## Bootstrap via GitHub Actions (recommended)
+## Deploy via GitHub Actions (recommended)
 
 ```
 GitHub → Actions → argocd-bootstrap.yml
-  environment: dev
-  action: install        ← installs ArgoCD via Helm
-  action: apply-apps     ← creates AppProject + Application CRDs
+  cloud: azure | gcp
+  environment: dev | qa | uat | prod
+  action: install          ← full install: ArgoCD + ESO + app secrets
+  action: apply-apps       ← generate + apply AppProject + Application
+  action: apply-addons     ← deploy Istio + Prometheus via ArgoCD
+  action: uninstall-apps   ← remove Application + AppProject only
+  action: uninstall-addons ← remove Istio + Prometheus Applications
+  action: uninstall        ← remove everything including ArgoCD namespace
 ```
 
 ## Manual bootstrap
 
 ```bash
-# 1. Add Argo Helm repo
+# 1. Install ArgoCD
 helm repo add argo https://argoproj.github.io/argo-helm && helm repo update
-
-# 2. Install ArgoCD
 helm install argocd argo/argo-cd \
   -n argocd --create-namespace \
-  -f platform/gitops/argocd/argocd/install-values.yaml
+  -f platform/gitops/argocd/values/argocd-install.yaml
 
-# 3. Get initial admin password
+# 2. Get initial admin password
 kubectl -n argocd get secret argocd-initial-admin-secret \
   -o jsonpath="{.data.password}" | base64 -d && echo
 
-# 4. Apply AppProject + Applications
-kubectl apply -f platform/gitops/argocd/apps/appproject.yaml
-kubectl apply -f platform/gitops/argocd/apps/app-dev.yaml
-kubectl apply -f platform/gitops/argocd/apps/app-qa.yaml
+# 3. Generate + apply AppProject + Application (Azure dev)
+helm template rentalapp-dev platform/gitops/argocd/charts/rental-app \
+  --values platform/gitops/argocd/environments/dev/values.yaml \
+  | kubectl apply -n argocd -f -
 
-# 5. Set Discord webhook secret
-kubectl create secret generic argocd-notifications-secret \
-  -n argocd \
-  --from-literal=discord-webhook-url="<your-discord-webhook-url>"
-
-# 6. Apply notification config
-kubectl apply -f platform/gitops/argocd/notifications/argocd-notifications-cm.yaml
-```
-
-## Image Updater
-
-ArgoCD Image Updater polls ACR for new image tags and commits updated
-image references back to `platform/kubernetes/overlays/dev/` (GitOps write-back).
-
-```bash
-# Install Image Updater
-kubectl apply -n argocd \
-  -f https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/stable/manifests/install.yaml
-
-# Configure ACR credentials via Managed Identity (no client secret needed)
-# The AKS node pool identity is assigned AcrPull by the bootstrap script.
-kubectl create secret docker-registry acr-pull-secret \
-  -n argocd \
-  --docker-server=${ACR_NAME}.azurecr.io \
-  --docker-username=00000000-0000-0000-0000-000000000000 \
-  --docker-password=$(az acr login --name ${ACR_NAME} --expose-token --query accessToken -o tsv)
+# 4. Deploy platform add-ons
+helm template platform-addons platform/gitops/argocd/charts/platform-addons \
+  --values platform/gitops/argocd/environments/dev/addons-values.yaml \
+  | kubectl apply -n argocd -f -
 ```
 
 ## Image tag flow
 
 ```
 RentalApp-Build CI
-  → docker build + push → ACR (tagged with git SHA)
+  → docker build + push → ACR / Artifact Registry (tagged with git SHA)
        │
-ArgoCD Image Updater (polls ACR every 2m)
-  → detects new tag
-  → commits updated kustomization.yaml to AI-RentalApp-Ledger
+ArgoCD Image Updater (polls registry every 2m)
+  → detects new semver tag
+  → commits updated kustomization.yaml to platform repo
        │
 ArgoCD auto-sync
-  → applies diff to AKS
+  → applies diff to AKS / GKE
   → rolling update (readiness probe gates traffic)
        │
 Discord notification → #deployments
 ```
 
-## GitHub Environments (recommended)
+## GitHub Environments
 
 Create these in repo Settings → Environments:
 
