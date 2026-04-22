@@ -6,7 +6,7 @@ name: K8s Manifest Validation
 
 on:
   push:
-    branches: [main, "feature/**", "fix/**", "hotfix/**"]
+    branches: [main]
     paths:
       - "platform/kubernetes/**"
       - "platform/gitops/argocd/**"
@@ -18,6 +18,10 @@ on:
       - "platform/gitops/argocd/**"
       - ".github/workflows/k8s-validate.yml"
   workflow_dispatch:
+
+concurrency:
+  group: k8s-validate-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

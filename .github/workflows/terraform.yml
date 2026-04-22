@@ -88,7 +88,7 @@ on:
         type: string
 
 concurrency:
-  group: terraform-${{ github.event.inputs.target_env || 'dev' }}-${{ github.ref }}
+  group: terraform-${{ github.event.inputs.target_env || 'dev' }}
   cancel-in-progress: false
 
 permissions:
