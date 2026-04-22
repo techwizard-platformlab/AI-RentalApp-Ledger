@@ -2,7 +2,7 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: api-gateway-sm
-  namespace: rental-dev
+  namespace: monitoring
   labels:
     release: kube-prometheus-stack   # must match Prometheus serviceMonitorSelector
     app: api-gateway

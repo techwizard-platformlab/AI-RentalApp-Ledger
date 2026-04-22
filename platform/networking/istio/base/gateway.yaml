@@ -1,0 +1,83 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Istio Ingress Gateway — TLS termination, rate limiting placeholder
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: rental-gateway
+spec:
+  selector:
+    istio: ingressgateway   # uses the default Istio ingress gateway
+  servers:
+    # Dev: plain HTTP on port 80, wildcard host (IP-based access, no TLS)
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "*"
+
+    # Prod: HTTPS with TLS termination — enable when cert-manager is configured
+    # - port:
+    #     number: 443
+    #     name: https
+    #     protocol: HTTPS
+    #   tls:
+    #     mode: SIMPLE
+    #     credentialName: rental-app-tls
+    #   hosts:
+    #     - rental-app.example.com
+    # - port:
+    #     number: 80
+    #     name: http-redirect
+    #     protocol: HTTP
+    #   tls:
+    #     httpsRedirect: true
+    #   hosts:
+    #     - rental-app.example.com
+
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# EnvoyFilter — rate limiting: 100 req/min per source IP
+# Requires Envoy local rate limit filter (no external rate limit service needed)
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: ingress-rate-limit
+  namespace: istio-system   # applies to ingress gateway
+spec:
+  workloadSelector:
+    labels:
+      istio: ingressgateway
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.local_ratelimit
+          typed_config:
+            "@type": type.googleapis.com/udpa.type.v1.TypedStruct
+            type_url: type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+            value:
+              stat_prefix: http_local_rate_limiter
+              token_bucket:
+                max_tokens: 100
+                tokens_per_fill: 100
+                fill_interval: 60s   # 100 req/min per source IP
+              filter_enabled:
+                runtime_key: local_rate_limit_enabled
+                default_value:
+                  numerator: 100
+                  denominator: HUNDRED
+              filter_enforced:
+                runtime_key: local_rate_limit_enforced
+                default_value:
+                  numerator: 100
+                  denominator: HUNDRED

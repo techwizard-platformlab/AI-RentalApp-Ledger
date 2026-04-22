@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: rental-dev
+resources:
+  - ../../base
+patches:
+  # EnvoyFilter must stay in istio-system (it targets the ingress gateway, not the app namespace)
+  - patch: |
+      - op: replace
+        path: /metadata/namespace
+        value: istio-system
+    target:
+      kind: EnvoyFilter
+      name: ingress-rate-limit

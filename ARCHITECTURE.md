@@ -84,7 +84,7 @@ AI-RentalApp-Ledger/
 │   ├── gcp/                    # GCP bootstrap + CI scripts
 │   ├── deploy-compute.sh       # Trigger Terraform apply via gh CLI
 │   └── destroy-compute.sh      # Trigger Terraform destroy via gh CLI
-├── environments/
+├── tests/
 │   ├── dev/testing/            # BDD smoke tests (Behave + pytest)
 │   ├── qa/testing/             # Full regression BDD suite
 │   └── shared/testing/         # validate_deployment.sh + ArgoCD PostSync hook

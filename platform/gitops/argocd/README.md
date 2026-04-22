@@ -56,7 +56,7 @@ GitHub → Actions → argocd-bootstrap.yml
 helm repo add argo https://argoproj.github.io/argo-helm && helm repo update
 helm install argocd argo/argo-cd \
   -n argocd --create-namespace \
-  -f platform/gitops/argocd/values/argocd-install.yaml
+  -f platform/gitops/argocd/install/argocd-install.yaml
 
 # 2. Get initial admin password
 kubectl -n argocd get secret argocd-initial-admin-secret \
@@ -64,7 +64,7 @@ kubectl -n argocd get secret argocd-initial-admin-secret \
 
 # 3. Generate + apply AppProject + Application (Azure dev)
 helm template rentalapp-dev platform/gitops/argocd/charts/rental-app \
-  --values platform/gitops/argocd/environments/dev/values.yaml \
+  --values platform/gitops/argocd/environments/dev/values-azure.yaml \
   | kubectl apply -n argocd -f -
 
 # 4. Deploy platform add-ons

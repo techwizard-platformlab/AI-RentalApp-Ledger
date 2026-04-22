@@ -162,7 +162,7 @@ install_argocd() {
   kubectl create namespace "${ARGOCD_NS}" --dry-run=client -o yaml | kubectl apply -f -
   helm upgrade --install argocd argo/argo-cd \
     --namespace "${ARGOCD_NS}" \
-    --values platform/gitops/argocd/values/argocd-install.yaml \
+    --values platform/gitops/argocd/install/argocd-install.yaml \
     --wait --timeout=300s
 }
 
@@ -172,7 +172,7 @@ upgrade_argocd() {
   helm repo update
   helm upgrade argocd argo/argo-cd \
     --namespace "${ARGOCD_NS}" \
-    --values platform/gitops/argocd/values/argocd-install.yaml \
+    --values platform/gitops/argocd/install/argocd-install.yaml \
     --wait --timeout=300s
 }
 
@@ -211,7 +211,7 @@ apply_apps() {
   log "Applying ArgoCD AppProject + Applications for ${ENV} on GCP…"
 
   local values_file="platform/gitops/argocd/environments/${ENV}/values-gcp.yaml"
-  [[ ! -f "$values_file" ]] && values_file="platform/gitops/argocd/environments/${ENV}/values.yaml"
+  [[ ! -f "$values_file" ]] && values_file="platform/gitops/argocd/environments/${ENV}/values-azure.yaml"
 
   helm template rentalapp-"${ENV}" \
     platform/gitops/argocd/charts/rental-app \
@@ -268,7 +268,7 @@ deploy_prometheus() {
 uninstall_apps() {
   log "Uninstalling ArgoCD applications for ${ENV}…"
   local values_file="platform/gitops/argocd/environments/${ENV}/values-gcp.yaml"
-  [[ ! -f "$values_file" ]] && values_file="platform/gitops/argocd/environments/${ENV}/values.yaml"
+  [[ ! -f "$values_file" ]] && values_file="platform/gitops/argocd/environments/${ENV}/values-azure.yaml"
 
   helm template rentalapp-"${ENV}" \
     platform/gitops/argocd/charts/rental-app \

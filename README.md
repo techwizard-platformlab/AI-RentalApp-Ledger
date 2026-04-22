@@ -25,7 +25,7 @@ AI-RentalApp-Ledger/
 │           ├── k8s-assistant/  # AI-powered pod diagnostics
 │           └── anomaly-detector/ # Statistical anomaly detection (Z-score, IQR)
 ├── bootstrap/                  # One-time cloud bootstrap scripts (Azure + GCP)
-├── environments/
+├── tests/
 │   ├── dev/
 │   │   └── testing/            # BDD smoke tests, dev-only validation
 │   ├── qa/
@@ -229,13 +229,13 @@ kubectl get pods -n rental-qa
 ### Run validation
 
 ```bash
-bash environments/shared/testing/validate_deployment.sh --cloud azure --env dev --notify discord
+bash tests/shared/testing/validate_deployment.sh --cloud azure --env dev --notify discord
 ```
 
 ### Run BDD tests locally
 
 ```bash
-cd environments/dev/testing
+cd tests/dev/testing
 BASE_URL=http://localhost:8000 behave features/ --tags @smoke
 ```
 

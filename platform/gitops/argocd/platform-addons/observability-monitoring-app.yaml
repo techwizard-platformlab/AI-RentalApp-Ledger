@@ -1,0 +1,40 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability-monitoring
+  namespace: argocd
+  labels:
+    project: rentalAppLedger
+    tier: platform
+    component: monitoring
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"   # Apply after kube-prometheus-stack (wave 2) is ready
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform-addons
+
+  source:
+    repoURL: "https://github.com/techwizard-platformlab/AI-RentalApp-Ledger"
+    targetRevision: main
+    path: platform/observability/monitoring
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false   # monitoring namespace created by kube-prometheus-stack
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 2m
+
+  revisionHistoryLimit: 3

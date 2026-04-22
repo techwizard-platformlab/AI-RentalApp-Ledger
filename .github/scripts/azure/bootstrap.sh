@@ -110,8 +110,8 @@ deploy_helm_pg() {
   az keyvault secret set --vault-name "$kv" --name "db-password"       --value "$db_pass" --output none
   az keyvault secret set --vault-name "$kv" --name "django-secret-key" --value "$dj_key"  --output none
 
-  local vals="platform/gitops/argocd/values/postgresql-values.yaml"
-  [ ! -f "$vals" ] && vals="platform/gitops/argocd/helm/postgresql/values-dev.yaml"
+  local vals="platform/gitops/argocd/install/postgresql-values.yaml"
+  [ ! -f "$vals" ] && vals="platform/gitops/argocd/environments/dev/postgresql-values.yaml"
   helm repo add bitnami https://charts.bitnami.com/bitnami && helm repo update
   helm upgrade --install postgresql bitnami/postgresql \
     --namespace "$NAMESPACE_APP" --values "$vals" \
@@ -144,7 +144,7 @@ install_eso() {
     --name "${ENV}-${LOCATION_SHORT:-eus2}-eso-identity" \
     --resource-group "$(env_rg)" --query clientId -o tsv)
   sed "s/REPLACE_AFTER_TERRAFORM_APPLY/${client_id}/" \
-    platform/gitops/argocd/apps/external-secrets-app.yaml | kubectl apply -f -
+    platform/gitops/argocd/platform-addons/external-secrets-app.yaml | kubectl apply -f -
   kubectl rollout status deployment/external-secrets -n external-secrets --timeout=5m || true
 }
 
@@ -158,8 +158,8 @@ apply_cluster_secret_store() {
 add_argo_helm_repo() { helm repo add argo https://argoproj.github.io/argo-helm && helm repo update; }
 
 _argocd_values() {
-  local v="platform/gitops/argocd/values/argocd-install.yaml"
-  [ -f "$v" ] || v="platform/gitops/argocd/argocd/install-values.yaml"
+  local v="platform/gitops/argocd/install/argocd-install.yaml"
+  [ -f "$v" ] || v="platform/gitops/argocd/install/install-values.yaml"
   echo "$v"
 }
 
@@ -208,11 +208,11 @@ register_gitops_repo() {
 
 apply_apps() {
   local server; server=$(grep "^acr_login_server=" "$GITHUB_OUTPUT" 2>/dev/null | tail -1 | cut -d= -f2 || true)
-  kubectl apply -f platform/gitops/argocd/apps/appproject.yaml
+  kubectl apply -f platform/gitops/argocd/projects/app-project.yaml
   if [ -n "$server" ]; then
-    sed "s|ACR_LOGIN_SERVER|${server}|g" "platform/gitops/argocd/apps/app-${ENV}.yaml" | kubectl apply -f -
+    sed "s|ACR_LOGIN_SERVER|${server}|g" "platform/gitops/argocd/environments/${ENV}/app-azure.yaml" | kubectl apply -f -
   else
-    kubectl apply -f "platform/gitops/argocd/apps/app-${ENV}.yaml"
+    kubectl apply -f "platform/gitops/argocd/environments/${ENV}/app-azure.yaml"
   fi
 }
 
@@ -252,27 +252,27 @@ create_alertmanager_secret() {
 
 # ── Istio ─────────────────────────────────────────────────────────────────────
 deploy_istio() {
-  kubectl apply -f platform/gitops/argocd/apps/platform-project.yaml
-  kubectl apply -f platform/gitops/argocd/apps/istio-base-app.yaml
+  kubectl apply -f platform/gitops/argocd/projects/platform-project.yaml
+  kubectl apply -f platform/gitops/argocd/platform-addons/istio-base-app.yaml
   for i in $(seq 1 24); do
     local c; c=$(kubectl get crd 2>/dev/null | grep -c "istio.io" || true)
     [ "$c" -ge 10 ] && break; sleep 15
   done
-  kubectl apply -f platform/gitops/argocd/apps/istiod-app.yaml
+  kubectl apply -f platform/gitops/argocd/platform-addons/istiod-app.yaml
   kubectl rollout status deployment/istiod -n istio-system --timeout=5m || true
-  kubectl apply -f platform/gitops/argocd/apps/istio-gateway-app.yaml
+  kubectl apply -f platform/gitops/argocd/platform-addons/istio-gateway-app.yaml
   local ip=""
   for i in $(seq 1 36); do
     ip=$(kubectl get svc istio-ingressgateway -n istio-system \
       -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
     [ -n "$ip" ] && echo "istio_ip=$ip" >> "$GITHUB_OUTPUT" && break; sleep 10
   done
-  kubectl apply -f platform/gitops/argocd/apps/istio-networking-app.yaml
+  kubectl apply -f platform/gitops/argocd/platform-addons/istio-networking-app.yaml
   echo "::notice::Istio deployed — gateway: ${ip:-pending}"
 }
 
 deploy_prometheus() {
-  kubectl apply -f platform/gitops/argocd/apps/prometheus-app.yaml
+  kubectl apply -f platform/gitops/argocd/platform-addons/prometheus-app.yaml
   echo "::notice::kube-prometheus-stack submitted to ArgoCD"
 }
 
@@ -315,7 +315,7 @@ case "$ACTION" in
   apply-apps)
     get_acr_server; apply_apps ;;
   apply-addons)
-    kubectl apply -f platform/gitops/argocd/apps/platform-project.yaml
+    kubectl apply -f platform/gitops/argocd/projects/platform-project.yaml
     case "$ADDONS" in all|prometheus) create_grafana_secret; create_alertmanager_secret ;; esac
     case "$ADDONS" in all|istio)      deploy_istio ;; esac
     case "$ADDONS" in all|prometheus) deploy_prometheus ;; esac ;;

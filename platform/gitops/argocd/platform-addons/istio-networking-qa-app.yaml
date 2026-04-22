@@ -1,0 +1,41 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: istio-networking-qa
+  namespace: argocd
+  labels:
+    project: rentalAppLedger
+    tier: platform
+    component: istio
+    environment: qa
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform-addons
+
+  source:
+    repoURL: "https://github.com/techwizard-platformlab/AI-RentalApp-Ledger"
+    targetRevision: main
+    path: platform/networking/istio/overlays/qa
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rental-qa
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 3m
+
+  revisionHistoryLimit: 3

@@ -1,0 +1,52 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rental-ledger-dev-gcp
+  namespace: argocd
+  labels:
+    project: rentalAppLedger
+    environment: dev
+    cloud: gcp
+  annotations:
+    # ArgoCD Image Updater: watch GCP Artifact Registry for new image tags.
+    # AR_REGISTRY is patched by argocd-bootstrap workflow (e.g. us-central1-docker.pkg.dev/PROJECT/rental-app).
+    argocd-image-updater.argoproj.io/image-list: >-
+      rental-app-ledger=AR_REGISTRY/rental-app-ledger,
+      rental-rag-api=AR_REGISTRY/rental-rag-api
+    argocd-image-updater.argoproj.io/rental-app-ledger.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/rental-rag-api.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/write-back-method: git
+    argocd-image-updater.argoproj.io/git-branch: main
+    # Notifications
+    notifications.argoproj.io/subscribe.on-sync-succeeded.discord: "rental-deployments"
+    notifications.argoproj.io/subscribe.on-sync-failed.discord: "rental-deployments"
+    notifications.argoproj.io/subscribe.on-health-degraded.discord: "rental-deployments"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: rental-ledger
+
+  source:
+    repoURL: "https://github.com/techwizard-platformlab/AI-RentalApp-Ledger"
+    targetRevision: main
+    path: platform/kubernetes/overlays/dev
+
+  destination:
+    server: https://GKE_CLUSTER_ENDPOINT   # replaced after: argocd cluster add <gke-context>
+    namespace: rental-dev
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+
+  revisionHistoryLimit: 5
