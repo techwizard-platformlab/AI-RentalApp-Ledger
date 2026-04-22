@@ -222,16 +222,16 @@ jobs:
       TF_VAR_github_actions_principal_id:  ${{ secrets.TF_GITHUB_ACTIONS_PRINCIPAL_ID }}
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3
+        uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85  # v4
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: true
 
       - name: Azure OIDC login
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2
+        uses: azure/login@2dd0bbf4064d5a1812889dc200bb8eed2597f82a  # v3
         with:
           client-id:       ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
@@ -355,7 +355,7 @@ jobs:
 
       - name: Upload plan artifact
         if: needs.setup.outputs.action == 'apply' && steps.plan.outcome == 'success'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
         with:
           name: tfplan-azure-${{ needs.setup.outputs.env }}-${{ github.run_id }}
           path: infrastructure/azure/environments/${{ needs.setup.outputs.env }}/tfplan.binary
@@ -363,7 +363,7 @@ jobs:
 
       - name: Post plan as PR comment
         if: github.event_name == 'pull_request' && always()
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
+        uses: actions/github-script@373c709c69115d41ff229c7e5df9f8788daa9553  # v9
         with:
           script: |
             const fs = require('fs');
@@ -502,16 +502,16 @@ jobs:
       TF_VAR_github_actions_principal_id:  ${{ secrets.TF_GITHUB_ACTIONS_PRINCIPAL_ID }}
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3
+        uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85  # v4
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: true
 
       - name: Azure OIDC login
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2
+        uses: azure/login@2dd0bbf4064d5a1812889dc200bb8eed2597f82a  # v3
         with:
           client-id:       ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
@@ -627,10 +627,10 @@ jobs:
       TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3
+        uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85  # v4
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: true
@@ -732,7 +732,7 @@ jobs:
 
       - name: Upload plan artifact
         if: needs.setup.outputs.action == 'apply' && steps.plan.outcome == 'success'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
         with:
           name: tfplan-gcp-${{ needs.setup.outputs.env }}-${{ github.run_id }}
           path: infrastructure/gcp/environments/${{ needs.setup.outputs.env }}/tfplan.binary
@@ -831,10 +831,10 @@ jobs:
       TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3
+        uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85  # v4
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: true
