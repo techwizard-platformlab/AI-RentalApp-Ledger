@@ -273,6 +273,12 @@ jobs:
         id: validate
         run: terraform validate
 
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@b44d90918738392ef880628227b610c95f161839 # v1.0.3
+        with:
+          working-directory: infrastructure/azure/environments/${{ needs.setup.outputs.env }}
+          soft-fail: true # Set to false to block on security findings
+
       - name: Terraform plan
         id: plan
         run: set -o pipefail; terraform plan -out=tfplan.binary -no-color 2>&1 | tee plan.txt
@@ -653,6 +659,12 @@ jobs:
       - name: Terraform validate
         id: validate
         run: terraform validate
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@b44d90918738392ef880628227b610c95f161839 # v1.0.3
+        with:
+          working-directory: infrastructure/gcp/environments/${{ needs.setup.outputs.env }}
+          soft-fail: true
 
       - name: Terraform plan
         id: plan

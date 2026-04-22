@@ -50,8 +50,8 @@ Jobs:
 
   azure job (runs after setup, if run_azure=true):
     - environment: azure-${env}   ← dynamic; GitHub enforces approval gate per env
-    - working-directory: terraform/azure/environments/${env}  ← dynamic
-    - Steps: fmt check → init → validate → plan (if not destroy) →
+    - working-directory: infrastructure/azure/environments/${env}  ← dynamic
+    - Steps: fmt check → init → validate → tfsec → plan (if not destroy) →
              OPA/conftest check (if not destroy) → apply OR destroy
     - Post plan output as PR comment (github-script)
     - Job summary for apply/destroy

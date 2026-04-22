@@ -1,0 +1,32 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-image-signatures
+  annotations:
+    policies.kyverno.io/title: Verify Image Signatures
+    policies.kyverno.io/category: Software Supply Chain Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Ensures that all container images are signed using Cosign and verify against 
+      the provided public key. This prevents unauthorized or tampered images from running.
+spec:
+  validationFailureAction: Audit
+  background: false
+  rules:
+    - name: verify-signature
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      verifyImages:
+        - imageReferences:
+            - "acr-rentalapp-*.azurecr.io/*"
+            - "*-docker.pkg.dev/*"
+          attestations:
+            - entries:
+                - keys:
+                    publicKeys: |-
+                      -----BEGIN PUBLIC KEY-----
+                      MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE... (PLACEHOLDER)
+                      -----END PUBLIC KEY-----

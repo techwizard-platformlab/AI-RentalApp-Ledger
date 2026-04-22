@@ -44,7 +44,17 @@ Generate production-ready Kyverno policies:
 - Require: image:sha256:... or image:1.2.3 format
 - Action: Enforce in rental-qa, Audit in rental-dev
 
-### Policy 6: Generate Default NetworkPolicy (ClusterPolicy)
+### Policy 6: Restrict NodePort Services (ClusterPolicy)
+- Block services of type NodePort
+- Action: Enforce
+- Encourage: LoadBalancer or Ingress instead
+
+### Policy 7: Verify Image Signatures (ClusterPolicy)
+- Ensure images are signed with Cosign
+- Verify against trusted public key
+- Action: Audit (template provided)
+
+### Policy 8: Generate Default NetworkPolicy (ClusterPolicy)
 - On namespace creation: auto-generate default-deny NetworkPolicy
 - Allow: DNS (port 53)
 - Label selector: auto-generate for known services
@@ -60,13 +70,15 @@ ALSO INCLUDE:
 - Kyverno install command (Helm, minimal resources for dev)
 
 OUTPUT:
-kyverno/
+platform/security/kyverno/
 |-- policies/
 |   |-- disallow-privileged.yaml
 |   |-- require-resource-limits.yaml
 |   |-- restrict-registries.yaml
 |   |-- require-labels.yaml
 |   |-- disallow-latest-tag.yaml
+|   |-- restrict-node-port.yaml
+|   |-- verify-image-signatures.yaml
 |   |-- generate-networkpolicy.yaml
 |   |-- pod-security.yaml
 |-- exceptions/

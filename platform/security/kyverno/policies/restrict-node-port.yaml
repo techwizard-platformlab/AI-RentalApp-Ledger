@@ -1,0 +1,27 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-node-port
+  annotations:
+    policies.kyverno.io/title: Restrict NodePort
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      NodePort services expose a service on each Node's IP at a static port. 
+      This can lead to accidental exposure and should be restricted in favor of 
+      LoadBalancer or Ingress services.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: validate-node-port
+      match:
+        any:
+          - resources:
+              kinds:
+                - Service
+      validate:
+        message: "Services of type NodePort are not allowed. Use LoadBalancer or Ingress."
+        pattern:
+          spec:
+            type: "!NodePort"

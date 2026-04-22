@@ -17,6 +17,9 @@ File: policy/terraform/azure.rego
 - Deny any resource outside allowed regions (eastus, westus, centralus, southcentralus)
 - Deny storage account without HTTPS-only enabled
 - Deny Key Vault without soft_delete_retention_days >= 7
+- Deny Public IPs on VMs/Load Balancers
+- Deny wide-open NSG rules (0.0.0.0/0 or *)
+- Enforce infrastructure_encryption_enabled on storage accounts
 
 File: policy/terraform/gcp.rego
 - Deny GKE with node count > 3 (KodeKloud quota)

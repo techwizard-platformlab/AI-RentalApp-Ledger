@@ -73,22 +73,11 @@ TASK:
 Generate a complete Terraform modular folder structure for Azure with:
 
 1. Folder layout:
-   terraform/
-   |-- modules/
-   |   |-- vnet/
-   |   |-- subnet/
-   |   |-- security_group/
-   |   |-- waf_policy/
-   |   |-- acr/
-   |   |-- aks/
-   |   |-- load_balancer/
-   |   |-- keyvault/
-   |   |-- storage_account/
-   |   |-- service_principal/
-   |-- environments/
-   |   |-- dev/
-   |   |-- qa/
-   |-- backend.tf (Azure Storage state backend)
+    |-- environments/
+    |   |-- dev/             # AKS + VNet + DB (env layer)
+    |   |-- qa/
+    |-- modules/             # aks, vnet, postgresql, keyvault, acr, ...
+    |-- backend.tf (Azure Storage state backend)
 
 2. For each module, provide:
    - main.tf (resource block, lowest-cost SKU)
@@ -263,19 +252,11 @@ TASK:
 Generate complete Terraform GCP modular folder structure:
 
 1. Folder layout:
-   terraform/
-   |-- modules/
-   |   |-- vpc/
-   |   |-- subnet/
-   |   |-- cloud_armor/
-   |   |-- artifact_registry/
-   |   |-- gke/
-   |   |-- secret_manager/
-   |   |-- storage_bucket/
-   |-- environments/
-   |   |-- dev/
-   |   |-- qa/
-   |-- backend.tf (GCS bucket state backend)
+    |-- environments/
+    |   |-- dev/
+    |   |-- qa/
+    |-- modules/             # gke, vpc, cloud_sql, artifact_registry, ...
+    |-- backend.tf (GCS bucket state backend)
 
 2. For each module:
    - main.tf (cheapest viable config)
@@ -444,8 +425,8 @@ Generate GitHub Actions workflows using the 2-file pattern:
 - setup job resolves env/action/cloud from trigger context
 - azure + gcp jobs run in parallel; both use dynamic:
     environment: azure-${env}  (GitHub enforces approval gate per env config)
-    working-directory: terraform/azure/environments/${env}
-- Steps per job: fmt → init → validate → plan → OPA check → apply/destroy
+    working-directory: infrastructure/azure/environments/${env}
+- Steps per job: fmt → init → validate → tfsec → plan → OPA check → apply/destroy
 - Post plan as PR comment; job summary for apply/destroy
 
 ### File 2: terraform-schedule.yml
@@ -505,9 +486,14 @@ Generate GitHub Actions CI workflow: ci-build.yml
 - Upload coverage report as artifact
 
 #### Job 2: security-scan (runs parallel with test)
-- Trivy filesystem scan before build
-- If CRITICAL CVE found: fail the build
+- Trivy filesystem scan (SCA) before build
+- Trivy secret scan (exit-code 1 if secrets found)
+- If CRITICAL CVE or secret found: fail the build
 - Upload SARIF to GitHub Security tab
+
+#### Job 2.5: container-scan (runs after build)
+- Trivy image scan after building but before/after push
+- Scan both Backend and Frontend images
 
 #### Job 3: build-and-push (needs: lint-and-test, security-scan)
 - Docker multi-stage build
@@ -552,6 +538,9 @@ File: policy/terraform/azure.rego
 - Deny any resource outside allowed regions (eastus, westus, centralus, southcentralus)
 - Deny storage account without HTTPS-only enabled
 - Deny Key Vault without soft_delete_retention_days >= 7
+- Deny Public IPs on VMs/Load Balancers
+- Deny wide-open NSG rules (0.0.0.0/0 or *)
+- Enforce infrastructure_encryption_enabled on storage accounts
 
 File: policy/terraform/gcp.rego
 - Deny GKE with node count > 3 (KodeKloud quota)
@@ -579,16 +568,15 @@ File: policy/pr/pr_checks.rego
 - Explain: warn rules are non-blocking and must be surfaced in PR comment
 
 FILE STRUCTURE:
-policy/
-|-- terraform/
-|   |-- azure.rego
-|   |-- gcp.rego
-|-- cost/
-|   |-- cost_limits.rego
-|-- pr/
-|   |-- pr_checks.rego
-|-- data/
-    |-- approved_skus.json
+platform/kubernetes/
+|-- base/               # Kustomize base per service
+|   |-- api-gateway/
+|   |-- rental-service/
+|   |-- ledger-service/
+|   |-- notification-service/
+|-- overlays/
+    |-- dev/            # replicas=1, dev labels
+    |-- qa/             # replicas=2, qa labels
 
 OUTPUT: All .rego files + GitHub Actions YAML steps + data files
 ```
@@ -648,7 +636,7 @@ Generate Kubernetes manifests for all 4 services:
 ALSO GENERATE:
 - kustomization.yaml for dev overlay and qa overlay
 - Directory structure:
-  k8s/
+  platform/kubernetes/
   |-- base/
   |   |-- api-gateway/
   |   |-- rental-service/
@@ -891,7 +879,17 @@ Generate production-ready Kyverno policies:
 - Require: image:sha256:... or image:1.2.3 format
 - Action: Enforce in rental-qa, Audit in rental-dev
 
-### Policy 6: Generate Default NetworkPolicy (ClusterPolicy)
+### Policy 6: Restrict NodePort Services (ClusterPolicy)
+- Block services of type NodePort
+- Action: Enforce
+- Encourage: LoadBalancer or Ingress instead
+
+### Policy 7: Verify Image Signatures (ClusterPolicy)
+- Ensure images are signed with Cosign
+- Verify against trusted public key
+- Action: Audit (template provided)
+
+### Policy 8: Generate Default NetworkPolicy (ClusterPolicy)
 - On namespace creation: auto-generate default-deny NetworkPolicy
 - Allow: DNS (port 53)
 - Label selector: auto-generate for known services
@@ -907,13 +905,15 @@ ALSO INCLUDE:
 - Kyverno install command (Helm, minimal resources for dev)
 
 OUTPUT:
-kyverno/
+platform/security/kyverno/
 |-- policies/
 |   |-- disallow-privileged.yaml
 |   |-- require-resource-limits.yaml
 |   |-- restrict-registries.yaml
 |   |-- require-labels.yaml
 |   |-- disallow-latest-tag.yaml
+|   |-- restrict-node-port.yaml
+|   |-- verify-image-signatures.yaml
 |   |-- generate-networkpolicy.yaml
 |   |-- pod-security.yaml
 |-- exceptions/
@@ -938,7 +938,7 @@ CONTEXT:
 TASK:
 Write complete OPA/Conftest policies:
 
-### Azure Policies (policy/azure/)
+### Azure Policies (platform/security/policies/azure/)
 
 #### azure_resources.rego
 package azure
@@ -951,12 +951,14 @@ package azure
 - RULE: Deny ACR with SKU = Premium (cost)
 - RULE: Deny any resource missing required tags (env, project, owner)
 - RULE: Warn if AKS node pool > 1 node in dev
+- RULE: Deny Public IPs (azurerm_public_ip)
+- RULE: Enforce infrastructure_encryption_enabled for storage
 
 #### azure_networking.rego
 package azure
 
 - RULE: Deny VNet CIDR outside 10.0.0.0/8 (private ranges only)
-- RULE: Deny NSG with inbound allow-all rule (0.0.0.0/0 on all ports)
+- RULE: Deny NSG with inbound allow-all rule (0.0.0.0/0 or * on any port)
 - RULE: Deny subnet without NSG association
 
 ### GCP Policies (policy/gcp/)

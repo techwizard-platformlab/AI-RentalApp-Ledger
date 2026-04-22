@@ -17,22 +17,11 @@ TASK:
 Generate a complete Terraform modular folder structure for Azure with:
 
 1. Folder layout:
-   terraform/
-   |-- modules/
-   |   |-- vnet/
-   |   |-- subnet/
-   |   |-- security_group/
-   |   |-- waf_policy/
-   |   |-- acr/
-   |   |-- aks/
-   |   |-- load_balancer/
-   |   |-- keyvault/
-   |   |-- storage_account/
-   |   |-- service_principal/
-   |-- environments/
-   |   |-- dev/
-   |   |-- qa/
-   |-- backend.tf (Azure Storage state backend)
+    |-- environments/
+    |   |-- dev/             # AKS + VNet + DB (env layer)
+    |   |-- qa/
+    |-- modules/             # aks, vnet, postgresql, keyvault, acr, ...
+    |-- backend.tf (Azure Storage state backend)
 
 2. For each module, provide:
    - main.tf (resource block, lowest-cost SKU)

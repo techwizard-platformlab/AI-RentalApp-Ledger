@@ -51,6 +51,15 @@ jobs:
           docker-images: true
           swap-storage: true
 
+      - name: Run Trivy vulnerability scanner (SCA)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          scan-type: 'fs'
+          scan-ref: 'apps/ai-engine/rag'
+          format: 'table'
+          exit-code: '0' # Warn only in CI; set to 1 to block on critical
+          severity: 'CRITICAL,HIGH'
+
       # ── Azure login (OIDC) ──────────────────────────────────────────────────
       - name: Azure login
         if: (github.event.inputs.cloud || 'azure') == 'azure'
@@ -134,6 +143,15 @@ jobs:
           cache-from: type=registry,ref=${{ steps.cloud_setup.outputs.acr_server }}/${{ env.IMAGE_NAME }}:buildcache
           cache-to:   type=registry,ref=${{ steps.cloud_setup.outputs.acr_server }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
 
+      - name: Run Trivy image scan (Azure)
+        if: (github.event.inputs.cloud || 'azure') == 'azure'
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          image-ref: ${{ steps.cloud_setup.outputs.image_tags }}
+          format: 'table'
+          exit-code: '0'
+          severity: 'CRITICAL,HIGH'
+
       # ── Build & Push (GCP Artifact Registry) ───────────────────────────────
       - name: Build & Push to Artifact Registry
         if: github.event.inputs.cloud == 'gcp'
@@ -145,6 +163,15 @@ jobs:
           tags: ${{ steps.cloud_setup_gcp.outputs.image_tags }}
           cache-from: type=registry,ref=${{ steps.cloud_setup_gcp.outputs.ar_repo }}/${{ env.IMAGE_NAME }}:buildcache
           cache-to:   type=registry,ref=${{ steps.cloud_setup_gcp.outputs.ar_repo }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+
+      - name: Run Trivy image scan (GCP)
+        if: github.event.inputs.cloud == 'gcp'
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          image-ref: ${{ steps.cloud_setup_gcp.outputs.image_tags }}
+          format: 'table'
+          exit-code: '0'
+          severity: 'CRITICAL,HIGH'
 
       - name: Notify Discord
         if: always() && env.DISCORD_WEBHOOK_URL != ''
