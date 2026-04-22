@@ -97,7 +97,7 @@ jobs:
         if: github.event.inputs.cloud == 'gcp'
         uses: google-github-actions/setup-gcloud@v2
 
-      # ── Fetch Discord webhook (Azure path) ─────────────────────────────────
+      # ── Fetch Discord webhook (Azure) ───────────────────────────────────────
       - name: Fetch Discord webhook from Key Vault
         if: github.event.inputs.cloud == 'azure'
         run: |
@@ -109,7 +109,7 @@ jobs:
             echo "DISCORD_WEBHOOK_URL=$DISCORD" >> "$GITHUB_ENV"
           fi
 
-      # ── Fetch Discord webhook (GCP path) ───────────────────────────────────
+      # ── Fetch Discord webhook (GCP) ─────────────────────────────────────────
       - name: Fetch Discord webhook from Secret Manager
         if: github.event.inputs.cloud == 'gcp'
         run: |
