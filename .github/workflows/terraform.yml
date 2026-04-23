@@ -274,9 +274,14 @@ jobs:
         id: validate
         run: terraform validate
 
-      - name: Run tfsec
-        uses: aquasecurity/tfsec-action@b466648d6e39e7c75324f25d83891162a721f2d6 # v1.0.3
+      - name: Run Trivy IAC scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          scan-type: 'config'
+          hide-progress: false
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
           working-directory: infrastructure/azure/environments/${{ needs.setup.outputs.env }}
           soft-fail: true # Set to false to block on security findings
 
@@ -662,11 +667,15 @@ jobs:
         id: validate
         run: terraform validate
 
-      - name: Run tfsec
-        uses: aquasecurity/tfsec-action@b466648d6e39e7c75324f25d83891162a721f2d6 # v1.0.3
+      - name: Run Trivy IAC scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          scan-type: 'config'
+          hide-progress: false
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
           working-directory: infrastructure/gcp/environments/${{ needs.setup.outputs.env }}
-          soft-fail: true
 
       - name: Terraform plan
         id: plan
