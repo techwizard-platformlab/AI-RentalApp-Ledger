@@ -274,7 +274,7 @@ jobs:
         run: terraform validate
 
       - name: Run tfsec
-        uses: aquasecurity/tfsec-action@b44d90918738392ef880628227b610c95f161839 # v1.0.3
+        uses: aquasecurity/tfsec-action@b466648d6e39e7c75324f25d83891162a721f2d6 # v1.0.3
         with:
           working-directory: infrastructure/azure/environments/${{ needs.setup.outputs.env }}
           soft-fail: true # Set to false to block on security findings
@@ -661,7 +661,7 @@ jobs:
         run: terraform validate
 
       - name: Run tfsec
-        uses: aquasecurity/tfsec-action@b44d90918738392ef880628227b610c95f161839 # v1.0.3
+        uses: aquasecurity/tfsec-action@b466648d6e39e7c75324f25d83891162a721f2d6 # v1.0.3
         with:
           working-directory: infrastructure/gcp/environments/${{ needs.setup.outputs.env }}
           soft-fail: true
