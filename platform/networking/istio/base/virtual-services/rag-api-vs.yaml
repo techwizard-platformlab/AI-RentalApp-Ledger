@@ -1,0 +1,21 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: rag-api-vs
+spec:
+  hosts:
+    - rag-api
+  gateways:
+    - mesh
+  http:
+    - route:
+        - destination:
+            host: rag-api
+            port:
+              number: 8080
+          weight: 100
+      timeout: 60s
+      retries:
+        attempts: 2
+        perTryTimeout: 30s
+        retryOn: gateway-error,connect-failure

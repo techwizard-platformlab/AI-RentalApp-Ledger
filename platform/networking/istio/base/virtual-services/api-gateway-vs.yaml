@@ -1,0 +1,41 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: api-gateway-vs
+spec:
+  hosts:
+    - "*"
+  gateways:
+    - rental-gateway
+  http:
+    - match:
+        - uri:
+            prefix: /api/
+        - uri:
+            prefix: /admin/
+        - uri:
+            exact: /healthz
+      route:
+        - destination:
+            host: api-gateway
+            port:
+              number: 8000
+          weight: 100
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: api-gateway-internal-vs
+spec:
+  hosts:
+    - api-gateway
+  gateways:
+    - mesh
+  http:
+    - route:
+        - destination:
+            host: api-gateway
+            port:
+              number: 8000
+          weight: 100

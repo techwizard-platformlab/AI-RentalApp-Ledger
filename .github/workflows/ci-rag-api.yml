@@ -6,23 +6,39 @@ on:
     paths:
       - "apps/ai-engine/rag/**"
       - ".github/workflows/ci-rag-api.yml"
+      - ".github/scripts/azure/ci-rag-api.sh"
+      - ".github/scripts/gcp/ci-rag-api.sh"
   workflow_dispatch:
+    inputs:
+      cloud:
+        description: "Target container registry"
+        required: true
+        default: "azure"
+        type: choice
+        options: [azure, gcp]
+      environment:
+        description: "Target environment tag"
+        required: false
+        default: "dev"
+        type: choice
+        options: [dev, qa, uat, prod]
 
 permissions:
   contents: read
-  id-token: write  # Required for Azure OIDC login and keyless signing
+  id-token: write   # Required for OIDC login and keyless signing
 
 env:
   IMAGE_NAME: rental-rag-api
-  DISCORD_WEBHOOK_URL: ""         # populated at runtime from Key Vault
+  DISCORD_WEBHOOK_URL: ""   # populated at runtime from Key Vault / Secret Manager
 
 jobs:
   build-and-push:
-    name: Build and Push to ACR
+    name: "Build & Push (${{ github.event.inputs.cloud || 'azure' }})"
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
       - name: Free Disk Space (Ubuntu)
         uses: jlumbroso/free-disk-space@main
@@ -35,56 +51,132 @@ jobs:
           docker-images: true
           swap-storage: true
 
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
+      - name: Run Trivy vulnerability scanner (SCA)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          scan-type: 'fs'
+          scan-ref: 'apps/ai-engine/rag'
+          format: 'table'
+          exit-code: '0' # Warn only in CI; set to 1 to block on critical
+          severity: 'CRITICAL,HIGH'
+
+      # ── Azure login (OIDC) ──────────────────────────────────────────────────
+      - name: Azure login
+        if: (github.event.inputs.cloud || 'azure') == 'azure'
+        uses: azure/login@2dd0bbf4064d5a1812889dc200bb8eed2597f82a  # v3
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Fetch secrets from Key Vault
+      # ── GCP login (Workload Identity) ───────────────────────────────────────
+      - name: GCP login
+        if: github.event.inputs.cloud == 'gcp'
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed  # v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account:            ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud CLI
+        if: github.event.inputs.cloud == 'gcp'
+        uses: google-github-actions/setup-gcloud@v2
+
+      # ── Fetch Discord webhook ───────────────────────────────────────────────
+      - name: Fetch Discord webhook (Azure)
+        if: (github.event.inputs.cloud || 'azure') == 'azure'
         run: |
-          KV="techwizard-plt-kv"
-          DISCORD=$(az keyvault secret show --vault-name "$KV" --name "rentalapp-discord-webhook" --query value -o tsv 2>/dev/null || true)
+          KV="${{ secrets.PLATFORM_KV_NAME }}"
+          DISCORD=$(az keyvault secret show --vault-name "$KV" \
+            --name "rentalapp-discord-webhook" --query value -o tsv 2>/dev/null || true)
           if [[ -n "$DISCORD" ]]; then
             echo "::add-mask::$DISCORD"
             echo "DISCORD_WEBHOOK_URL=$DISCORD" >> "$GITHUB_ENV"
           fi
 
-      - name: Get ACR Name and Login
-        id: acr
+      - name: Fetch Discord webhook (GCP)
+        if: github.event.inputs.cloud == 'gcp'
         run: |
-          ACR_SERVER=$(az keyvault secret show \
-            --vault-name "techwizard-plt-kv" \
-            --name "acr-login-server" \
-            --query value -o tsv 2>/dev/null || \
-          az acr list \
-            --resource-group "my-Rental-App-Dev" \
-            --query "[0].loginServer" -o tsv)
-          ACR_NAME=$(echo "$ACR_SERVER" | cut -d'.' -f1)
-          echo "acr_server=$ACR_SERVER" >> "$GITHUB_OUTPUT"
-          echo "acr_name=$ACR_NAME" >> "$GITHUB_OUTPUT"
-          az acr login --name "$ACR_NAME"
+          DISCORD=$(gcloud secrets versions access latest \
+            --secret="rentalapp-discord-webhook" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" 2>/dev/null || true)
+          if [[ -n "$DISCORD" ]]; then
+            echo "::add-mask::$DISCORD"
+            echo "DISCORD_WEBHOOK_URL=$DISCORD" >> "$GITHUB_ENV"
+          fi
+
+      # ── Azure registry setup ────────────────────────────────────────────────
+      - name: Azure registry setup
+        if: (github.event.inputs.cloud || 'azure') == 'azure'
+        id: cloud_setup
+        env:
+          ENVIRONMENT:       ${{ github.event.inputs.environment || 'dev' }}
+          IMAGE_NAME:        ${{ env.IMAGE_NAME }}
+          GIT_SHA:           ${{ github.sha }}
+          PLATFORM_KV_NAME:  ${{ secrets.PLATFORM_KV_NAME }}
+          AZURE_SHARED_RG:   ${{ secrets.TF_SHARED_RG }}
+        run: bash .github/scripts/azure/ci-rag-api.sh
+
+      # ── GCP registry setup ──────────────────────────────────────────────────
+      - name: GCP registry setup
+        if: github.event.inputs.cloud == 'gcp'
+        id: cloud_setup_gcp
+        env:
+          ENVIRONMENT:    ${{ github.event.inputs.environment || 'dev' }}
+          IMAGE_NAME:     ${{ env.IMAGE_NAME }}
+          GIT_SHA:        ${{ github.sha }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_REGION:     ${{ secrets.GCP_REGION }}
+        run: bash .github/scripts/gcp/ci-rag-api.sh
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build & Push
+      # ── Build & Push (Azure ACR) ────────────────────────────────────────────
+      - name: Build & Push to ACR
+        if: (github.event.inputs.cloud || 'azure') == 'azure'
         uses: docker/build-push-action@v6
         with:
           context: ./apps/ai-engine/rag
           file: ./apps/ai-engine/rag/Dockerfile
           push: true
-          tags: |
-            ${{ steps.acr.outputs.acr_server }}/${{ env.IMAGE_NAME }}:latest
-            ${{ steps.acr.outputs.acr_server }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          cache-from: type=registry,ref=${{ steps.acr.outputs.acr_server }}/${{ env.IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ steps.acr.outputs.acr_server }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+          tags: ${{ steps.cloud_setup.outputs.image_tags }}
+          cache-from: type=registry,ref=${{ steps.cloud_setup.outputs.acr_server }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to:   type=registry,ref=${{ steps.cloud_setup.outputs.acr_server }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+
+      - name: Run Trivy image scan (Azure)
+        if: (github.event.inputs.cloud || 'azure') == 'azure'
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          image-ref: ${{ steps.cloud_setup.outputs.image_tags }}
+          format: 'table'
+          exit-code: '0'
+          severity: 'CRITICAL,HIGH'
+
+      # ── Build & Push (GCP Artifact Registry) ───────────────────────────────
+      - name: Build & Push to Artifact Registry
+        if: github.event.inputs.cloud == 'gcp'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/ai-engine/rag
+          file: ./apps/ai-engine/rag/Dockerfile
+          push: true
+          tags: ${{ steps.cloud_setup_gcp.outputs.image_tags }}
+          cache-from: type=registry,ref=${{ steps.cloud_setup_gcp.outputs.ar_repo }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to:   type=registry,ref=${{ steps.cloud_setup_gcp.outputs.ar_repo }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+
+      - name: Run Trivy image scan (GCP)
+        if: github.event.inputs.cloud == 'gcp'
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          image-ref: ${{ steps.cloud_setup_gcp.outputs.image_tags }}
+          format: 'table'
+          exit-code: '0'
+          severity: 'CRITICAL,HIGH'
 
       - name: Notify Discord
         if: always() && env.DISCORD_WEBHOOK_URL != ''
         uses: sarisia/actions-status-discord@eb045afee445dc055c18d3d90bd0f244fd062708  # v1
         with:
           webhook: ${{ env.DISCORD_WEBHOOK_URL }}
-          status: ${{ job.status }}
-          title: "RAG API — Container Build & Push"
+          status:  ${{ job.status }}
+          title:   "RAG API — Build & Push (${{ github.event.inputs.cloud || 'azure' }})"

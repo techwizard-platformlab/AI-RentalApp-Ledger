@@ -1,0 +1,9 @@
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: rag-api-dr
+spec:
+  host: rag-api
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL

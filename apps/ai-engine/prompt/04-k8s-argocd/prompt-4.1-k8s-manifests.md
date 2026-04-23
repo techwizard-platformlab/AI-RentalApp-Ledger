@@ -49,7 +49,7 @@ Generate Kubernetes manifests for all 4 services:
 ALSO GENERATE:
 - kustomization.yaml for dev overlay and qa overlay
 - Directory structure:
-  k8s/
+  platform/kubernetes/
   |-- base/
   |   |-- api-gateway/
   |   |-- rental-service/

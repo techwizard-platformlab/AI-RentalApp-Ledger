@@ -24,9 +24,15 @@ Generate GitHub Actions CI workflow: ci-build.yml
 - Upload coverage report as artifact
 
 #### Job 2: security-scan (runs parallel with test)
-- Trivy filesystem scan before build
-- If CRITICAL CVE found: fail the build
+- Trivy filesystem scan (SCA) before build
+- Trivy secret scan (exit-code 1 if secrets found)
+- If CRITICAL CVE or secret found: fail the build
 - Upload SARIF to GitHub Security tab
+
+#### Job 2.5: container-scan (runs after build)
+- Trivy image scan after building but before/after push
+- Scan both Backend and Frontend images
+- Fail if CRITICAL vulnerabilities found
 
 #### Job 3: build-and-push (needs: lint-and-test, security-scan)
 - Docker multi-stage build

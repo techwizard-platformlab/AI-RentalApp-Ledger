@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: k8s-event-watcher
-  namespace: rental-dev
+  namespace: monitoring
   labels:
     app: k8s-event-watcher
     project: rentalAppLedger
@@ -58,7 +58,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: event-watcher-sa
-  namespace: rental-dev
+  namespace: monitoring
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -80,4 +80,4 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: event-watcher-sa
-    namespace: rental-dev
+    namespace: monitoring

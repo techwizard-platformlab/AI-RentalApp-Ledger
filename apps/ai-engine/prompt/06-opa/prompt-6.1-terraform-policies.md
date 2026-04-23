@@ -11,7 +11,7 @@ CONTEXT:
 TASK:
 Write complete OPA/Conftest policies:
 
-### Azure Policies (policy/azure/)
+### Azure Policies (platform/security/policies/azure/)
 
 #### azure_resources.rego
 package azure
@@ -24,15 +24,17 @@ package azure
 - RULE: Deny ACR with SKU = Premium (cost)
 - RULE: Deny any resource missing required tags (env, project, owner)
 - RULE: Warn if AKS node pool > 1 node in dev
+- RULE: Deny Public IPs (azurerm_public_ip)
+- RULE: Enforce infrastructure_encryption_enabled for storage
 
 #### azure_networking.rego
 package azure
 
 - RULE: Deny VNet CIDR outside 10.0.0.0/8 (private ranges only)
-- RULE: Deny NSG with inbound allow-all rule (0.0.0.0/0 on all ports)
+- RULE: Deny NSG with inbound allow-all rule (0.0.0.0/0 or * on any port)
 - RULE: Deny subnet without NSG association
 
-### GCP Policies (policy/gcp/)
+### GCP Policies (platform/security/policies/gcp/)
 
 #### gcp_resources.rego
 package gcp
@@ -45,7 +47,7 @@ package gcp
 - RULE: Deny resources outside US regions
 - RULE: Deny service account with primitive roles (owner/editor on project level)
 
-### Shared Policies (policy/shared/)
+### Shared Policies (platform/security/policies/shared/)
 
 #### security_baseline.rego
 package shared

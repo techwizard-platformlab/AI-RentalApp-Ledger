@@ -6,18 +6,22 @@ name: K8s Manifest Validation
 
 on:
   push:
-    branches: [main, "feature/**", "fix/**", "hotfix/**"]
+    branches: [main]
     paths:
       - "platform/kubernetes/**"
-      - "platform/gitops/argocd/apps/**"
+      - "platform/gitops/argocd/**"
       - ".github/workflows/k8s-validate.yml"
   pull_request:
     branches: [main]
     paths:
       - "platform/kubernetes/**"
-      - "platform/gitops/argocd/apps/**"
+      - "platform/gitops/argocd/**"
       - ".github/workflows/k8s-validate.yml"
   workflow_dispatch:
+
+concurrency:
+  group: k8s-validate-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -38,7 +42,7 @@ jobs:
         overlay: [dev, qa]
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
       # ── Install tools ─────────────────────────────────────────────────────
       - name: Install kustomize
@@ -160,7 +164,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
       - name: Install kubeconform
         run: |
@@ -181,18 +185,22 @@ jobs:
             -summary \
             -schema-location default \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-            platform/gitops/argocd/apps/appproject.yaml \
-            platform/gitops/argocd/apps/app-dev.yaml \
-            platform/gitops/argocd/apps/app-qa.yaml
+            platform/gitops/argocd/projects/app-project.yaml \
+            platform/gitops/argocd/environments/dev/app-azure.yaml \
+            platform/gitops/argocd/environments/dev/app-gcp.yaml \
+            platform/gitops/argocd/environments/qa/app-azure.yaml \
+            platform/gitops/argocd/environments/qa/app-gcp.yaml
 
       - name: Write GitHub step summary
         if: always()
         run: |
           echo "## ArgoCD App Manifests Validation" >> "$GITHUB_STEP_SUMMARY"
           echo "Files checked:" >> "$GITHUB_STEP_SUMMARY"
-          echo "- \`platform/gitops/argocd/apps/appproject.yaml\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- \`platform/gitops/argocd/apps/app-dev.yaml\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- \`platform/gitops/argocd/apps/app-qa.yaml\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`platform/gitops/argocd/projects/app-project.yaml\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`platform/gitops/argocd/environments/dev/app-azure.yaml\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`platform/gitops/argocd/environments/dev/app-gcp.yaml\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`platform/gitops/argocd/environments/qa/app-azure.yaml\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`platform/gitops/argocd/environments/qa/app-gcp.yaml\`" >> "$GITHUB_STEP_SUMMARY"
 
   # ── Gate: all overlays must pass ─────────────────────────────────────────
   # This job is the required status check to set on the branch protection rule.
@@ -205,7 +213,7 @@ jobs:
 
     steps:
       - name: Azure login (OIDC)
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2
+        uses: azure/login@2dd0bbf4064d5a1812889dc200bb8eed2597f82a  # v3
         with:
           client-id:       ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id:       ${{ secrets.AZURE_TENANT_ID }}

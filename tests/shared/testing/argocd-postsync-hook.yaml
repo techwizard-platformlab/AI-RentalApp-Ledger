@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: post-deploy-validate
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: default
+      containers:
+        - name: validate
+          image: bitnami/kubectl:latest
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              NAMESPACE="${APP_NAMESPACE:-rental-dev}"
+              ENV="${APP_ENV:-dev}"
+
+              echo "Running post-sync validation for namespace=${NAMESPACE}…"
+
+              # Wait for deployments to stabilize
+              for deploy in $(kubectl get deploy -n "${NAMESPACE}" -o name 2>/dev/null); do
+                kubectl rollout status "${deploy}" -n "${NAMESPACE}" --timeout=120s || true
+              done
+
+              # Basic pod health check
+              NOT_RUNNING=$(kubectl get pods -n "${NAMESPACE}" --no-headers \
+                | grep -v -E "Running|Completed" | wc -l)
+              if [[ "$NOT_RUNNING" -gt 0 ]]; then
+                echo "ERROR: ${NOT_RUNNING} pod(s) not in Running/Completed state"
+                kubectl get pods -n "${NAMESPACE}"
+                exit 1
+              fi
+
+              echo "Post-sync validation passed for ${NAMESPACE}"
+          env:
+            - name: APP_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: APP_ENV
+              value: "dev"

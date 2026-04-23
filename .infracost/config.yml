@@ -5,13 +5,45 @@
 version: 0.1
 
 projects:
+  # ── Azure ────────────────────────────────────────────────────────────────────
   - path: infrastructure/azure/environments/dev
     name: azure-dev
     terraform_var_files:
       - terraform.tfvars
 
+  - path: infrastructure/azure/environments/qa
+    name: azure-qa
+    terraform_var_files:
+      - terraform.tfvars
+
+  - path: infrastructure/azure/environments/uat
+    name: azure-uat
+    terraform_var_files:
+      - terraform.tfvars
+
+  - path: infrastructure/azure/environments/prod
+    name: azure-prod
+    terraform_var_files:
+      - terraform.tfvars
+
+  # ── GCP ──────────────────────────────────────────────────────────────────────
   - path: infrastructure/gcp/environments/dev
     name: gcp-dev
+    terraform_var_files:
+      - terraform.tfvars
+
+  - path: infrastructure/gcp/environments/qa
+    name: gcp-qa
+    terraform_var_files:
+      - terraform.tfvars
+
+  - path: infrastructure/gcp/environments/uat
+    name: gcp-uat
+    terraform_var_files:
+      - terraform.tfvars
+
+  - path: infrastructure/gcp/environments/prod
+    name: gcp-prod
     terraform_var_files:
       - terraform.tfvars
 
@@ -20,7 +52,7 @@ projects:
 # Budget: 400 INR (~$5 USD) per week per cloud
 #
 # Keep costs down:
-# - Destroy AKS/GKE after each session (ci-cd/scripts/destroy-compute.sh)
+# - Destroy AKS/GKE after each session (.github/scripts/destroy-compute.sh)
 # - ACR and SQL persist (cheap daily billing, data retained)
 # - Run only ONE cloud at a time
 # - OPA deny threshold: $22/month | warn: $15/month

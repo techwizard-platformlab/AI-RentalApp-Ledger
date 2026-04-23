@@ -25,7 +25,7 @@ permissions:
   pull-requests: write
 
 env:
-  DISCORD_WEBHOOK_URL: ""         # populated at runtime from Key Vault (azure matrix only)
+  DISCORD_WEBHOOK_URL: ""         # populated at runtime from Key Vault (azure only)
 
 jobs:
   bdd-tests:
@@ -37,10 +37,10 @@ jobs:
         cloud: ${{ github.event_name == 'repository_dispatch' && fromJSON('["azure","gcp"]') || (inputs.cloud == 'both' && fromJSON('["azure","gcp"]') || fromJSON(format('["{0}"]', inputs.cloud))) }}
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
       - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
         with:
           python-version: "3.11"
           cache: pip
@@ -51,7 +51,7 @@ jobs:
       # ── Auth ──────────────────────────────────────────────────────────────
       - name: Azure login (OIDC)
         if: matrix.cloud == 'azure'
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2
+        uses: azure/login@2dd0bbf4064d5a1812889dc200bb8eed2597f82a  # v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -142,7 +142,7 @@ jobs:
 
       - name: Upload HTML report
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
         with:
           name: bdd-report-${{ matrix.cloud }}
           path: qa/reports/report-${{ matrix.cloud }}.html

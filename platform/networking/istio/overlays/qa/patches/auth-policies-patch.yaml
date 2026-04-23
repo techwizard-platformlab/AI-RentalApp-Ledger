@@ -1,0 +1,62 @@
+# Patch: replace rental-dev namespace refs with rental-qa in authorization policies
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-api-gateway-to-rental-service
+spec:
+  rules:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/rental-qa/sa/api-gateway"
+      to:
+        - operation:
+            methods: [GET, POST, PUT, DELETE]
+            paths: ["/api/rental/*", "/health"]
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-api-gateway-to-ledger-service
+spec:
+  rules:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/rental-qa/sa/api-gateway"
+      to:
+        - operation:
+            methods: [GET, POST, PUT]
+            paths: ["/api/ledger/*", "/health"]
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-all-to-notification-service
+spec:
+  rules:
+    - from:
+        - source:
+            namespaces: ["rental-qa"]
+      to:
+        - operation:
+            methods: [GET, POST]
+            paths: ["/notify/*", "/health"]
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-api-gateway-to-rag-api
+spec:
+  rules:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/rental-qa/sa/api-gateway"
+      to:
+        - operation:
+            methods: [GET, POST]
+            paths: ["/query", "/health", "/stats"]

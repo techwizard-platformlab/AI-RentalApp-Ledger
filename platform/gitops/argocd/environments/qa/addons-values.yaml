@@ -1,0 +1,24 @@
+# platform/gitops/argocd/environments/qa/addons-values.yaml
+# Platform add-ons overrides for qa
+
+environment: qa
+
+istio:
+  enabled: true
+  version: "1.22.0"
+  pilot:
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+
+prometheus:
+  enabled: true
+  grafana:
+    enabled: true
+    adminPasswordSecret: kube-prometheus-stack-grafana
+  alertmanager:
+    enabled: true
+    discordWebhookSecret: alertmanager-discord-secret
+  retention: 14d
+  storageSize: 20Gi

@@ -14,13 +14,13 @@
 | 01 | Terraform — Azure | `infrastructure/azure/` (AKS, ACR, KeyVault, VNet) |
 | 02 | Terraform — GCP | `infrastructure/gcp/` (GKE, Artifact Registry, VPC) |
 | 03 | GitHub Actions CI | `.github/workflows/ci-build.yml` |
-| 04 | K8s manifests + ArgoCD | `platform/kubernetes/`, `platform/gitops/argocd/apps/` |
+| 04 | K8s manifests + ArgoCD | `platform/kubernetes/`, `platform/gitops/argocd/` |
 | 05 | Istio mTLS + Kyverno | `platform/networking/istio/`, `platform/security/kyverno/` |
 | 06 | OPA + Gatekeeper + Infracost | `platform/security/policies/`, `platform/security/gatekeeper/`, `.infracost/` |
 | 07 | Prometheus + Grafana | `platform/observability/monitoring/` |
 | 08 | AI K8s Assistant + Anomaly Detector | `apps/ai-engine/tools/` |
 | 09 | RAG Pipeline | `apps/ai-engine/rag/` |
-| 10 | BDD Tests + Post-Deploy Validation | `environments/dev/testing/` |
+| 10 | BDD Tests + Post-Deploy Validation | `tests/dev/testing/` |
 | 11 | Discord + Email + ArgoCD Notifications | `platform/observability/alerting/`, `platform/gitops/argocd/notifications/` |
 
 ---
@@ -179,7 +179,7 @@ helm repo update
 helm install argocd argo/argo-cd \
   --namespace argocd \
   --version 6.x.x \
-  -f platform/gitops/argocd/argocd/install-values.yaml
+  -f platform/gitops/argocd/install/install-values.yaml
 
 # Wait for ArgoCD to be ready
 kubectl rollout status deploy/argocd-server -n argocd
@@ -309,13 +309,15 @@ kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80
 
 ```bash
 # Create AppProject (namespace + resource restrictions)
-kubectl apply -f platform/gitops/argocd/apps/appproject.yaml
+kubectl apply -f platform/gitops/argocd/projects/app-project.yaml
 
 # Deploy dev environment (auto-sync enabled)
-kubectl apply -f platform/gitops/argocd/apps/app-dev.yaml
+kubectl apply -f platform/gitops/argocd/environments/dev/app-azure.yaml
+# For GCP: kubectl apply -f platform/gitops/argocd/environments/dev/app-gcp.yaml
 
 # Deploy qa environment (manual sync)
-kubectl apply -f platform/gitops/argocd/apps/app-qa.yaml
+kubectl apply -f platform/gitops/argocd/environments/qa/app-azure.yaml
+# For GCP: kubectl apply -f platform/gitops/argocd/environments/qa/app-gcp.yaml
 
 # → ArgoCD pulls platform/kubernetes/overlays/dev from GitHub and deploys:
 #     api-gateway (port 8000, LoadBalancer)
@@ -350,7 +352,7 @@ kubectl get pods -n rental-qa
 kubectl config use-context rental-dev-gke
 
 # Apply RBAC so ArgoCD hub (AKS) can manage GKE spoke
-kubectl apply -f platform/gitops/argocd/apps/gke-cluster-rbac.yaml
+kubectl apply -f platform/gitops/argocd/cluster/gke-cluster-rbac.yaml
 
 # Switch back to AKS hub
 kubectl config use-context rental-dev-aks
@@ -359,7 +361,7 @@ kubectl config use-context rental-dev-aks
 argocd cluster add rental-dev-gke
 
 # Apply ApplicationSet (deploys to both AKS + GKE)
-kubectl apply -f platform/gitops/argocd/apps/applicationset-multicluster.yaml
+kubectl apply -f platform/gitops/argocd/applicationset-multicluster.yaml
 ```
 
 ---
@@ -430,7 +432,7 @@ GitHub → Actions → k8s-validate.yml → Run workflow
 
 Or run BDD tests locally:
   pip install behave requests
-  cd environments/dev/testing
+  cd tests/dev/testing
   BASE_URL=http://localhost:8000 behave features/ --tags @smoke
   behave features/ --tags @smoke --format html --outfile reports/smoke-report.html
 ```
@@ -439,7 +441,7 @@ Or run BDD tests locally:
 
 ```bash
 # Run full validation (pods, health, TLS, memory, Istio)
-bash environments/dev/testing/validate_deployment.sh --cloud azure --env dev --notify discord
+bash tests/dev/testing/validate_deployment.sh --cloud azure --env dev --notify discord
 
 # Expected output sections:
 #   [1/5] Pod Status Check       → all pods Running
@@ -449,7 +451,7 @@ bash environments/dev/testing/validate_deployment.sh --cloud azure --env dev --n
 #   [5/5] Istio Sidecar Check    → all pods have istio-proxy
 
 # ArgoCD PostSync hook (auto-runs after each sync)
-kubectl apply -f environments/dev/testing/argocd-postsync-hook.yaml
+kubectl apply -f tests/dev/testing/argocd-postsync-hook.yaml
 ```
 
 ### Step 22 — Verify Notifications Are Working
@@ -570,7 +572,7 @@ AI-RentalApp-Ledger/
 │       └── anomaly-detector/   # Statistical anomaly detection
 ├── bootstrap/                  # One-time cloud setup scripts
 ├── ci-cd/scripts/              # deploy-compute.sh / destroy-compute.sh
-├── environments/dev/testing/   # BDD tests + post-deploy validation
+├── tests/dev/testing/          # BDD tests + post-deploy validation
 ├── infrastructure/
 │   ├── azure/                  # AKS, ACR, KeyVault, VNet, SQL, budget modules
 │   └── gcp/                    # GKE, Artifact Registry, VPC, Cloud SQL modules

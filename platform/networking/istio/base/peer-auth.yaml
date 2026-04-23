@@ -1,0 +1,88 @@
+# PeerAuthentication — enforce STRICT mTLS across the namespace
+# All service-to-service traffic must use Istio mutual TLS.
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default-strict-mtls
+spec:
+  mtls:
+    mode: STRICT
+
+---
+# Health check probes come from kubelet (not through sidecar) — allow PERMISSIVE on health ports.
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: api-gateway-health-permissive
+spec:
+  selector:
+    matchLabels:
+      app: api-gateway
+  portLevelMtls:
+    8000:
+      mode: PERMISSIVE
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: rental-service-health-permissive
+spec:
+  selector:
+    matchLabels:
+      app: rental-service
+  portLevelMtls:
+    8001:
+      mode: PERMISSIVE
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: ledger-service-health-permissive
+spec:
+  selector:
+    matchLabels:
+      app: ledger-service
+  portLevelMtls:
+    8002:
+      mode: PERMISSIVE
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: notification-service-health-permissive
+spec:
+  selector:
+    matchLabels:
+      app: notification-service
+  portLevelMtls:
+    8003:
+      mode: PERMISSIVE
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: rag-api-health-permissive
+spec:
+  selector:
+    matchLabels:
+      app: rag-api
+  portLevelMtls:
+    8080:
+      mode: PERMISSIVE
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: frontend-health-permissive
+spec:
+  selector:
+    matchLabels:
+      app: rentalapp-frontend
+  portLevelMtls:
+    3000:
+      mode: PERMISSIVE

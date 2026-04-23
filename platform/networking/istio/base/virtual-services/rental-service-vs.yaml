@@ -1,0 +1,22 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: rental-service-vs
+spec:
+  hosts:
+    - rental-service
+  gateways:
+    - mesh
+  http:
+    - route:
+        - destination:
+            host: rental-service
+            subset: v1
+            port:
+              number: 8001
+          weight: 100
+      timeout: 2s
+      retries:
+        attempts: 3
+        perTryTimeout: 2s
+        retryOn: gateway-error,connect-failure,retriable-4xx

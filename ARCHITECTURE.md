@@ -79,24 +79,28 @@ AI-RentalApp-Ledger/
 │           ├── k8s-assistant/  # AI-powered pod diagnostics (Ollama / Groq / Claude)
 │           └── anomaly-detector/ # Statistical anomaly detection (Z-score, IQR)
 ├── bootstrap/                  # One-time cloud setup scripts + secrets management
-├── ci-cd/
-│   └── scripts/                # deploy-compute.sh / destroy-compute.sh
-├── environments/
-│   └── dev/
-│       └── testing/            # BDD tests (Behave + pytest), post-deploy validation
+├── .github/scripts/
+│   ├── azure/                  # Azure bootstrap + CI scripts
+│   ├── gcp/                    # GCP bootstrap + CI scripts
+│   ├── deploy-compute.sh       # Trigger Terraform apply via gh CLI
+│   └── destroy-compute.sh      # Trigger Terraform destroy via gh CLI
+├── tests/
+│   ├── dev/testing/            # BDD smoke tests (Behave + pytest)
+│   ├── qa/testing/             # Full regression BDD suite
+│   └── shared/testing/         # validate_deployment.sh + ArgoCD PostSync hook
 ├── infrastructure/
 │   ├── azure/
+│   │   ├── shared/             # ACR + Key Vault (permanent)
 │   │   ├── environments/dev|qa/ # Terraform root configs
-│   │   └── modules/            # aks, acr, keyvault, vnet, sql_database, budget, …
+│   │   └── modules/            # aks, postgresql, sql_database, vnet, keyvault, budget, …
 │   └── gcp/
 │       ├── environments/dev|qa/
 │       └── modules/            # gke, artifact_registry, cloud_sql, vpc, …
 ├── platform/
 │   ├── gitops/argocd/
-│   │   ├── apps/               # ArgoCD Application + AppProject + ApplicationSet CRDs
-│   │   ├── argocd/             # ArgoCD Helm install values
-│   │   ├── helm/               # PostgreSQL fallback Helm values
-│   │   └── notifications/      # Discord notification templates + triggers
+│   │   ├── charts/             # Helm charts for ArgoCD Application + add-ons
+│   │   ├── environments/       # Per-env Helm values (dev/qa × azure/gcp)
+│   │   └── values/             # ArgoCD install + PostgreSQL fallback values
 │   ├── kubernetes/
 │   │   ├── base/               # Kustomize base manifests per service
 │   │   └── overlays/dev|qa/    # Environment overlays (replicas, image tags)

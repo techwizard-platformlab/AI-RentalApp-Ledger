@@ -71,3 +71,45 @@ deny contains msg if {
     [r.address, retention]
   )
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rule 5: Deny Public IPs on VMs (Security Hardening)
+# ─────────────────────────────────────────────────────────────────────────────
+deny contains msg if {
+  r := resources[_]
+  r.type == "azurerm_public_ip"
+  # Optional: allow list for specific edge components if needed
+  msg := sprintf("Public IP resource '%s' is prohibited. Use a Load Balancer or Application Gateway.", [r.address])
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rule 6: Deny wide-open NSG rules (0.0.0.0/0)
+# ─────────────────────────────────────────────────────────────────────────────
+deny contains msg if {
+  r := resources[_]
+  r.type == "azurerm_network_security_rule"
+  r.change.after.access == "Allow"
+  r.change.after.direction == "Inbound"
+  r.change.after.source_address_prefix == "*"
+  msg := sprintf("NSG Rule '%s' allows inbound traffic from '*'. Use specific CIDR blocks.", [r.address])
+}
+
+deny contains msg if {
+  r := resources[_]
+  r.type == "azurerm_network_security_rule"
+  r.change.after.access == "Allow"
+  r.change.after.direction == "Inbound"
+  r.change.after.source_address_prefix == "0.0.0.0/0"
+  msg := sprintf("NSG Rule '%s' allows inbound traffic from '0.0.0.0/0'. Use specific CIDR blocks.", [r.address])
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rule 7: Enforce encryption at rest for Storage
+# ─────────────────────────────────────────────────────────────────────────────
+deny contains msg if {
+  r := resources[_]
+  r.type == "azurerm_storage_account"
+  # In modern Azure this is default, but good to enforce/verify
+  not r.change.after.infrastructure_encryption_enabled == true
+  msg := sprintf("Storage Account '%s' should have infrastructure_encryption_enabled = true for double encryption.", [r.address])
+}

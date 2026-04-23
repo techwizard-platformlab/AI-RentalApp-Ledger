@@ -1,0 +1,26 @@
+# platform/gitops/argocd/install/postgresql-values.yaml
+# Bitnami PostgreSQL Helm fallback values
+# Used only when db_mode=helm-pg (no managed DB available)
+# helm upgrade --install postgresql bitnami/postgresql --values this-file
+
+auth:
+  postgresPassword: ""      # overridden at runtime from Key Vault / Secret Manager
+  database: rentalapp
+
+primary:
+  persistence:
+    enabled: true
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring

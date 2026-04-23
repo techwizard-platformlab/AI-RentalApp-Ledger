@@ -30,7 +30,7 @@ metadata:
     notifications.argoproj.io/subscribe.on-out-of-sync.discord:    rentalapp
     notifications.argoproj.io/subscribe.on-rollback.discord:       rentalapp
 spec:
-  # ... (rest of spec unchanged — see platform/gitops/argocd/apps/app-dev.yaml)
+  # ... (rest of spec unchanged — see platform/gitops/argocd/environments/dev/app-azure.yaml)
   project: rentalAppLedger
   source:
     repoURL: "https://github.com/<org>/rentalAppLedger"
