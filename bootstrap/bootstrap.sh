@@ -322,6 +322,14 @@ bootstrap_azure() {
     "repo:${GITHUB_ORG}/${GITHUB_REPO}:pull_request"
 
   _add_federated_credential \
+    "github-${GITHUB_REPO}-dev-env" \
+    "repo:${GITHUB_ORG}/${GITHUB_REPO}:environment:dev"
+
+  _add_federated_credential \
+    "github-${GITHUB_REPO}-qa-env" \
+    "repo:${GITHUB_ORG}/${GITHUB_REPO}:environment:qa"
+
+  _add_federated_credential \
     "github-${GITHUB_REPO}-env-approval" \
     "repo:${GITHUB_ORG}/${GITHUB_REPO}:environment:terraform-destructive-approval"
 

@@ -209,6 +209,7 @@ jobs:
     name: Validation Gate
     runs-on: ubuntu-latest
     needs: [validate, validate-argocd-apps]
+    environment: dev
     if: always()
 
     steps:

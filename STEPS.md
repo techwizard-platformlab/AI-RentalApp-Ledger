@@ -57,6 +57,23 @@ gcloud config set project <your-project-id>
 CLOUD=gcp bash bootstrap/bootstrap.sh
 ```
 
+### Step 2.1 — Configure GitHub Environments (Manual UI Step)
+
+You must create these environments in your GitHub repository to enable OIDC authentication and the approval gate.
+
+1.  Go to **Settings** → **Environments** → **New environment**.
+2.  Create **`dev`**:
+    *   No protection rules needed.
+    *   Used for OIDC auth from *any* feature branch.
+3.  Create **`qa`**:
+    *   No protection rules needed.
+4.  Create **`terraform-destructive-approval`**:
+    *   **Required reviewers**: Add yourself.
+    *   This is the mandatory gate for all `apply` and `destroy` actions.
+
+> [!TIP]
+> Ensure **Deployment branches** for `dev` and `qa` are set to **"All branches"** to allow testing pipelines from feature branches.
+
 ### Step 3 — Push identifiers to GitHub Secrets
 
 ```bash
@@ -119,7 +136,7 @@ Use the **Infra** workflow (`terraform.yml`) to manage your cloud resources.
 
 1.  GitHub → **Actions** → **Infra** → **Run workflow**.
 2.  Inputs:
-    - **Target environment**: `dev`
+    - **Target environment**: `dev` or `qa`
     - **Target cloud**: `azure` (or `gcp` / `both`)
     - **Action**: `plan`
     - **Scope**: `full` (for first run) or `compute-only`

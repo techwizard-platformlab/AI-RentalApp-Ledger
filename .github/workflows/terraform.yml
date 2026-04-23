@@ -200,6 +200,7 @@ jobs:
     name: "Azure Plan / ${{ needs.setup.outputs.env }}"
     runs-on: ubuntu-latest
     needs: setup
+    environment: ${{ needs.setup.outputs.env }}
     if: |
       needs.setup.outputs.run_azure == 'true' &&
       needs.setup.outputs.action != 'destroy'
@@ -481,6 +482,7 @@ jobs:
     name: "Azure Apply / Destroy"
     runs-on: ubuntu-latest
     needs: [setup, azure_plan, azure_approve]
+    environment: ${{ needs.setup.outputs.env }}
     if: |
       always() &&
       needs.setup.outputs.run_azure == 'true' &&
