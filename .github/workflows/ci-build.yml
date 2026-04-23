@@ -131,7 +131,8 @@ jobs:
 
       - name: Install Trivy
         run: |
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.61.0
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin v0.61.0
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl -o html.tpl
           trivy --version
 
       - name: Run Trivy filesystem scan (SARIF → Security tab)
@@ -152,7 +153,7 @@ jobs:
             --exit-code 0 \
             --ignore-unfixed \
             --format template \
-            --template "@/usr/local/share/trivy/templates/html.tpl" \
+            --template "@html.tpl" \
             --output trivy-fs-report.html \
             .
 
