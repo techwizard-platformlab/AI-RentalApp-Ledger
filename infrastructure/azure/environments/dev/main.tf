@@ -199,8 +199,7 @@ resource "azurerm_role_assignment" "eso_kv_secrets_user" {
 # to the managed identity above — no client secret required.
 resource "azurerm_federated_identity_credential" "eso" {
   name                = "eso-federated"
-  resource_group_name = azurerm_resource_group.env.name
-  parent_id           = azurerm_user_assigned_identity.eso.id
+  user_assigned_identity_id = azurerm_user_assigned_identity.eso.id
   audience            = ["api://AzureADTokenExchange"]
   issuer              = module.aks.oidc_issuer_url
   subject             = "system:serviceaccount:external-secrets:external-secrets"
