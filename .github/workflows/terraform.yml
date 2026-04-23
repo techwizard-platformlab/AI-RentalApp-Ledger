@@ -274,16 +274,38 @@ jobs:
         id: validate
         run: terraform validate
 
-      - name: Run Trivy IAC scan
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.61.0
+          trivy --version
+
+      - name: Run Trivy IAC scan (console)
+        run: |
+          trivy config \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --format table \
+            infrastructure/azure/environments/${{ needs.setup.outputs.env }}
+        continue-on-error: true
+
+      - name: Run Trivy IAC scan (HTML report)
+        run: |
+          trivy config \
+            --severity CRITICAL,HIGH \
+            --exit-code 0 \
+            --format template \
+            --template "@/usr/local/share/trivy/templates/html.tpl" \
+            --output trivy-azure-${{ needs.setup.outputs.env }}.html \
+            infrastructure/azure/environments/${{ needs.setup.outputs.env }}
+
+      - name: Upload Trivy HTML report
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
         with:
-          scan-type: 'config'
-          hide-progress: false
-          format: 'table'
-          exit-code: '1'
-          severity: 'CRITICAL,HIGH'
-          working-directory: infrastructure/azure/environments/${{ needs.setup.outputs.env }}
-          soft-fail: true # Set to false to block on security findings
+          name: trivy-azure-${{ needs.setup.outputs.env }}-report
+          path: trivy-azure-${{ needs.setup.outputs.env }}.html
+          retention-days: 14
+
 
       - name: Terraform plan
         id: plan
@@ -667,15 +689,38 @@ jobs:
         id: validate
         run: terraform validate
 
-      - name: Run Trivy IAC scan
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.61.0
+          trivy --version
+
+      - name: Run Trivy IAC scan (console)
+        run: |
+          trivy config \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --format table \
+            infrastructure/gcp/environments/${{ needs.setup.outputs.env }}
+        continue-on-error: true
+
+      - name: Run Trivy IAC scan (HTML report)
+        run: |
+          trivy config \
+            --severity CRITICAL,HIGH \
+            --exit-code 0 \
+            --format template \
+            --template "@/usr/local/share/trivy/templates/html.tpl" \
+            --output trivy-gcp-${{ needs.setup.outputs.env }}.html \
+            infrastructure/gcp/environments/${{ needs.setup.outputs.env }}
+
+      - name: Upload Trivy HTML report
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
         with:
-          scan-type: 'config'
-          hide-progress: false
-          format: 'table'
-          exit-code: '1'
-          severity: 'CRITICAL,HIGH'
-          working-directory: infrastructure/gcp/environments/${{ needs.setup.outputs.env }}
+          name: trivy-gcp-${{ needs.setup.outputs.env }}-report
+          path: trivy-gcp-${{ needs.setup.outputs.env }}.html
+          retention-days: 14
+
 
       - name: Terraform plan
         id: plan

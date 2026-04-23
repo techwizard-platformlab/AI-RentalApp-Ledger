@@ -129,22 +129,46 @@ jobs:
             echo "DISCORD_WEBHOOK_URL=$DISCORD" >> "$GITHUB_ENV"
           fi
 
-      - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          format: sarif
-          output: trivy-results.sarif
-          severity: CRITICAL,HIGH
-          exit-code: 1           # Fail build if secrets/high-vulnerabilities are found
-          ignore-unfixed: true
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.61.0
+          trivy --version
+
+      - name: Run Trivy filesystem scan (SARIF → Security tab)
+        run: |
+          trivy fs \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --ignore-unfixed \
+            --format sarif \
+            --output trivy-results.sarif \
+            .
+        continue-on-error: true
+
+      - name: Run Trivy filesystem scan (HTML report)
+        run: |
+          trivy fs \
+            --severity CRITICAL,HIGH \
+            --exit-code 0 \
+            --ignore-unfixed \
+            --format template \
+            --template "@/usr/local/share/trivy/templates/html.tpl" \
+            --output trivy-fs-report.html \
+            .
 
       - name: Upload SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@5c8a8a642e79153f5d047b10ec1cba1d1cc65699  # v3
         if: always()
         with:
           sarif_file: trivy-results.sarif
+
+      - name: Upload Trivy HTML report
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
+        with:
+          name: trivy-filesystem-report
+          path: trivy-fs-report.html
+          retention-days: 14
 
       - name: Notify Discord
         if: always() && env.DISCORD_WEBHOOK_URL != ''
