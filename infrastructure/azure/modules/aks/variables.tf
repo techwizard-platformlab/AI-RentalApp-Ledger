@@ -1,3 +1,9 @@
+variable "api_server_authorized_ip_ranges" {
+  description = "IP ranges authorized to access the Kubernetes API server."
+  type        = list(string)
+  default     = ["0.0.0.0/32"] # Default to blocking all; override in tfvars
+}
+
 variable "environment" {
   type = string
 }
@@ -54,10 +60,4 @@ variable "appnode_node_count" {
   description = "Number of nodes in the app node pool."
   type        = number
   default     = 1
-}
-
-variable "api_server_authorized_ip_ranges" {
-  description = "IP ranges authorized to access the Kubernetes API server."
-  type        = list(string)
-  default     = ["0.0.0.0/32"] # Default to blocking all; override in tfvars
 }
