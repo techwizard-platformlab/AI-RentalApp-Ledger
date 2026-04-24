@@ -307,7 +307,7 @@ jobs:
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
         with:
           name: trivy-azure-${{ needs.setup.outputs.env }}-report
-          path: trivy-azure-${{ needs.setup.outputs.env }}.html
+          path: infrastructure/azure/environments/${{ needs.setup.outputs.env }}/trivy-azure-${{ needs.setup.outputs.env }}.html
           retention-days: 14
 
 
@@ -726,7 +726,7 @@ jobs:
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
         with:
           name: trivy-gcp-${{ needs.setup.outputs.env }}-report
-          path: trivy-gcp-${{ needs.setup.outputs.env }}.html
+          path: infrastructure/gcp/environments/${{ needs.setup.outputs.env }}/trivy-gcp-${{ needs.setup.outputs.env }}.html
           retention-days: 14
 
 

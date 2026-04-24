@@ -198,12 +198,12 @@ resource "azurerm_role_assignment" "eso_kv_secrets_user" {
 # Links the K8s ServiceAccount "external-secrets" (in ns "external-secrets")
 # to the managed identity above — no client secret required.
 resource "azurerm_federated_identity_credential" "eso" {
-  name                = "eso-federated"
+  name                      = "eso-federated"
   user_assigned_identity_id = azurerm_user_assigned_identity.eso.id
-  audience            = ["api://AzureADTokenExchange"]
-  issuer              = module.aks.oidc_issuer_url
-  subject             = "system:serviceaccount:external-secrets:external-secrets"
-  depends_on          = [module.aks]
+  audience                  = ["api://AzureADTokenExchange"]
+  issuer                    = module.aks.oidc_issuer_url
+  subject                   = "system:serviceaccount:external-secrets:external-secrets"
+  depends_on                = [module.aks]
 }
 
 # ── Cost management ───────────────────────────────────────────────────────────
