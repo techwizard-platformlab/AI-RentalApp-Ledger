@@ -111,3 +111,24 @@ See [../.infracost/config.yml](../.infracost/config.yml) for project configurati
 | `confirm` | type env name to confirm non-dev apply/destroy | — |
 
 `compute-only` destroys AKS/GKE + VNet/VPC but keeps ACR, Key Vault, and Storage Account.
+
+---
+
+## Security & Hardening
+
+The infrastructure layer follows a Zero-Trust security model with the following implementations:
+
+### 1 — AKS Security Profile
+- **Authorized IP Ranges**: The Kubernetes API server is restricted to authorized IP ranges (`api_server_authorized_ip_ranges`). Access is denied by default unless specifically allowed in `terraform.tfvars`.
+- **RBAC Enforcement**: Azure RBAC is explicitly enabled for identity management.
+- **Network Policy**: Azure Network Policy is enabled to provide granular control over pod-to-pod communication within the cluster.
+
+### 2 — Data Protection (Network ACLs)
+- **Key Vault**: Configured with network ACLs that `Deny` access by default. Bypass is allowed only for trusted Azure Services.
+- **Storage Account**: Implements network rules with a default `Deny` action. Access is restricted to trusted Azure services and designated IP ranges.
+
+### 3 — CI/CD Pipeline Security
+- **OIDC Authentication**: No client secrets are stored in GitHub. Authentication is handled via Azure Managed Identities and Federated Credentials.
+- **Security Scanning**: Every plan run includes a `trivy` IAC scan. Reports are uploaded as job artifacts.
+- **Automated Formatting**: Strict `terraform fmt` checks ensure codebase consistency and prevent linting-related pipeline failures.
+

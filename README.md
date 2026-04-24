@@ -269,14 +269,15 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for:
 The platform recently underwent a security and stability hardening phase:
 
 - **Terraform Workflow Hardening**:
-  - Automated `TF_VAR_env_resource_group_name` injection to prevent interactive prompt failures in CI/CD.
-  - Fixed artifact upload paths for Trivy security reports (reports now correctly appear in GitHub Action summaries).
-  - Enforced strict `terraform fmt` compliance across all modules.
+  - **Variable Automation**: Automated `TF_VAR_env_resource_group_name` injection to resolve interactive prompt failures in automated environments.
+  - **Artifact Management**: Fixed path resolution for Trivy HTML reports, ensuring security scan results are correctly attached to GitHub Action runs.
+  - **Linting Compliance**: Resolved inconsistent formatting in `main.tf` and enforced strict `terraform fmt` across all modules.
 - **AKS Security (Zero-Trust)**:
-  - Enabled **API Server Authorized IP Ranges** (defaulting to restricted access).
-  - Enforced **Azure Network Policy** for granular pod-to-pod communication control.
-  - Explicitly enabled **RBAC** for all identity operations.
-- **Data Protection**:
-  - **Key Vault**: Implemented Network ACLs with a default `Deny` action and `AzureServices` bypass.
-  - **Storage Account**: Enforced Network Rules with default `Deny` and restricted access to trusted Azure services.
+  - **API Server Lockdown**: Implemented `api_server_access_profile` with authorized IP ranges to restrict cluster management access.
+  - **Network Isolation**: Enabled Azure Network Policy for pod-level traffic control.
+  - **Identity Hardening**: Explicitly enabled RBAC for all cluster operations.
+- **Cloud Resource Hardening**:
+  - **Key Vault**: Secured with Network ACLs (`Deny` default) to prevent public exposure of secrets.
+  - **Storage Account**: Enforced Network Rules and disabled anonymous access to satisfy security compliance.
+- **Provider Stability**: Upgraded module syntax to be fully compatible with the `azurerm` 4.x provider (e.g., migrating `api_server_authorized_ip_ranges` to the `access_profile` block).
 
