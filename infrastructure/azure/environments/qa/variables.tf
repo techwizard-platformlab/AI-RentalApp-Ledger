@@ -98,6 +98,12 @@ variable "kubernetes_version" {
   default     = null
 }
 
+variable "api_auth_ips" {
+  description = "IP ranges authorized to access the Kubernetes API server."
+  type        = list(string)
+  default     = ["0.0.0.0/32"] # Default to blocking all; override in tfvars
+}
+
 # ── Database engine selection ─────────────────────────────────────────────────
 
 variable "db_engine" {

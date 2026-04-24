@@ -22,8 +22,15 @@ resource "azurerm_kubernetes_cluster" "this" {
     type = "SystemAssigned"
   }
 
+  role_based_access_control_enabled = true
+
+  api_server_access_profile {
+    authorized_ip_ranges = var.api_auth_ips
+  }
+
   network_profile {
     network_plugin    = "azure"
+    network_policy    = "azure"
     load_balancer_sku = "standard"
     outbound_type     = "loadBalancer"
     # Must not overlap with VNet (10.0.0.0/16) or subnets (10.0.1-3.0/24)
@@ -39,7 +46,7 @@ resource "azurerm_kubernetes_cluster" "this" {
   # OIDC issuer — once enabled it cannot be disabled (Azure platform restriction).
   # Keep true to match existing cluster state and avoid 400 OIDCIssuerFeatureCannotBeDisabled.
   oidc_issuer_enabled       = true
-  workload_identity_enabled = true  # required for ESO pod-to-Key Vault auth via federated identity
+  workload_identity_enabled = true # required for ESO pod-to-Key Vault auth via federated identity
 
   tags = var.tags
 

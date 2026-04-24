@@ -22,6 +22,7 @@
 | 09 | RAG Pipeline | `apps/ai-engine/rag/` |
 | 10 | BDD Tests + Post-Deploy Validation | `tests/dev/testing/` |
 | 11 | Discord + Email + ArgoCD Notifications | `platform/observability/alerting/`, `platform/gitops/argocd/notifications/` |
+| 12 | Security Hardening & Workflow Stability | `infrastructure/azure/modules/`, `.github/workflows/terraform.yml` |
 
 ---
 
@@ -56,6 +57,23 @@ gcloud auth login
 gcloud config set project <your-project-id>
 CLOUD=gcp bash bootstrap/bootstrap.sh
 ```
+
+### Step 2.1 — Configure GitHub Environments (Manual UI Step)
+
+You must create these environments in your GitHub repository to enable OIDC authentication and the approval gate.
+
+1.  Go to **Settings** → **Environments** → **New environment**.
+2.  Create **`dev`**:
+    *   No protection rules needed.
+    *   Used for OIDC auth from *any* feature branch.
+3.  Create **`qa`**:
+    *   No protection rules needed.
+4.  Create **`terraform-destructive-approval`**:
+    *   **Required reviewers**: Add yourself.
+    *   This is the mandatory gate for all `apply` and `destroy` actions.
+
+> [!TIP]
+> Ensure **Deployment branches** for `dev` and `qa` are set to **"All branches"** to allow testing pipelines from feature branches.
 
 ### Step 3 — Push identifiers to GitHub Secrets
 
@@ -109,446 +127,173 @@ source bootstrap/load-secrets.sh
 
 ---
 
-## PHASE 2 — Provision Cloud Infrastructure (Terraform via GitHub Actions)
+---
 
-### Step 4 — Push Code to GitHub
+## PHASE 2 — Infrastructure Pipeline (Terraform)
 
-```bash
-git init                              # if not already a git repo
-git remote add origin https://github.com/<org>/rentalAppLedger.git
-git add .
-git commit -m "feat: initial infra setup prompts 00-11"
-git push origin main
+Use the **Infra** workflow (`terraform.yml`) to manage your cloud resources.
 
-# → Automatically triggers .github/workflows/terraform.yml
-```
+### Step 4 — Run Infra Pipeline (Plan)
 
-### Step 5 — Verify Terraform Plan (GitHub Actions)
+1.  GitHub → **Actions** → **Infra** → **Run workflow**.
+2.  Inputs:
+    - **Target environment**: `dev` or `qa`
+    - **Target cloud**: `azure` (or `gcp` / `both`)
+    - **Action**: `plan`
+    - **Scope**: `full` (for first run) or `compute-only`
+3.  **Verify the Plan**:
+    - ✔ **Lint & validate**: terraform fmt -check, terraform validate
+    - ✔ **Security Scan**: `tfsec` must show 0 critical findings.
+    - ✔ **OPA Cost Check**: Check the Job Summary for budget compliance.
+    - ✔ **Plan output**: Inspect the logs to see what will be created.
 
-```
-GitHub → Actions → terraform.yml → latest run
-  ✔ Lint & validate: terraform fmt -check, terraform validate
-  ✔ OPA/Conftest: must show 0 DENY violations
-  ✔ Infracost: estimated cost must be < $30/month
-  ✔ Plan output: shows resources to be created
-```
+### Step 5 — Run Infra Pipeline (Apply)
 
-### Step 6 — Approve Terraform Apply
+1.  GitHub → **Actions** → **Infra** → **Run workflow**.
+2.  Inputs:
+    - **Action**: `apply`
+    - **Scope**: `full` (for first run to create ACR/KV) or `compute-only`
+3.  **Approve**:
+    - The workflow will pause at the **terraform-destructive-approval** gate.
+    - Click **Review deployment** and **Approve**.
 
-```
-GitHub → Actions → terraform.yml → "Review deployment" → Approve
-
-Wait 10-15 minutes for:
-  ✔ Azure: AKS cluster (rental-dev-aks) + ACR + KeyVault
-  ✔ GCP:   GKE cluster (rental-dev-gke) + Artifact Registry
-```
+Wait 10-15 minutes for AKS/GKE and managed databases to be provisioned.
 
 ---
 
-## PHASE 3 — Install Cluster Add-ons (Manual, One-Time)
+## PHASE 3 — GitOps Pipeline (ArgoCD & Add-ons)
 
-### Step 7 — Get Cluster Credentials
+Use the **ArgoCD Bootstrap** workflow (`argocd-bootstrap.yml`) to install the platform layer.
 
-```bash
-# Azure AKS
-az aks get-credentials \
-  --resource-group rental-dev-rg \
-  --name rental-dev-aks \
-  --overwrite-existing
+### Step 6 — Install ArgoCD
 
-# GCP GKE
-gcloud container clusters get-credentials rental-dev-gke \
-  --region us-central1 \
-  --project <your-project-id>
+1.  GitHub → **Actions** → **ArgoCD Bootstrap** → **Run workflow**.
+2.  Inputs:
+    - **Action**: `install`
+    - **Cloud**: `azure` (or `gcp`)
+    - **Database backend**: `azure-pg` (matches your Terraform config)
+3.  **What happens**:
+    - Installs ArgoCD via Helm.
+    - Configures External Secrets Operator (ESO) for Key Vault access.
+    - Registers the GitHub repo as a source in ArgoCD.
 
-# Verify both clusters are accessible
-kubectl config get-contexts
-kubectl get nodes    # should show system + appnode pool nodes
-```
+### Step 7 — Deploy Applications
 
-### Step 8 — Install ArgoCD (AKS Hub Cluster)
+1.  GitHub → **Actions** → **ArgoCD Bootstrap** → **Run workflow**.
+2.  Inputs:
+    - **Action**: `apply-apps`
+3.  **What happens**:
+    - Applies `AppProject` and `Application` CRDs.
+    - ArgoCD begins syncing manifests from `platform/kubernetes/overlays/dev`.
 
-```bash
-# Set context to AKS
-kubectl config use-context rental-dev-aks
+### Step 8 — Install Platform Add-ons
 
-# Create namespace and install
-kubectl create namespace argocd
-helm repo add argo https://argoproj.github.io/argo-helm
-helm repo update
-helm install argocd argo/argo-cd \
-  --namespace argocd \
-  --version 6.x.x \
-  -f platform/gitops/argocd/install/install-values.yaml
-
-# Wait for ArgoCD to be ready
-kubectl rollout status deploy/argocd-server -n argocd
-
-# Get initial admin password
-kubectl get secret argocd-initial-admin-secret -n argocd \
-  -o jsonpath="{.data.password}" | base64 -d && echo
-
-# Port-forward to UI (optional)
-kubectl port-forward svc/argocd-server -n argocd 8080:443
-# Open: https://localhost:8080  (admin / <password from above>)
-```
-
-### Step 9 — Install ArgoCD Notifications
-
-```bash
-# Apply notifications ConfigMap (5 Discord templates)
-kubectl apply -f platform/gitops/argocd/notifications/argocd-notifications-cm.yaml
-
-# Create secret with real Discord webhook URL
-kubectl create secret generic argocd-notifications-secret \
-  --namespace argocd \
-  --from-literal=discord-webhook-url="https://discord.com/api/webhooks/<id>/<token>"
-
-# Verify
-kubectl get secret argocd-notifications-secret -n argocd
-```
-
-### Step 10 — Install Istio
-
-```bash
-# Install istioctl
-curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.20.0 sh -
-export PATH=$PWD/istio-1.20.0/bin:$PATH
-
-# Install Istio minimal profile (fits B2s node constraints)
-istioctl install --set profile=minimal -y
-
-# Enable sidecar injection for app namespaces
-kubectl label namespace rental-dev istio-injection=enabled --overwrite
-kubectl label namespace rental-qa  istio-injection=enabled --overwrite
-
-# Apply Istio config (mTLS, gateway, virtual services, auth policies)
-kubectl apply -f platform/networking/istio/peer-auth.yaml
-kubectl apply -f platform/networking/istio/gateway.yaml
-kubectl apply -f platform/networking/istio/destination-rules/
-kubectl apply -f platform/networking/istio/virtual-services/
-kubectl apply -f platform/networking/istio/authorization-policies/
-
-# Verify mTLS is STRICT
-istioctl x describe pod <any-app-pod> -n rental-dev
-```
-
-### Step 11 — Install Kyverno
-
-```bash
-helm repo add kyverno https://kyverno.github.io/kyverno/
-helm repo update
-helm install kyverno kyverno/kyverno \
-  --namespace kyverno \
-  --create-namespace \
-  --set replicaCount=1
-
-# Apply all 7 policies + exception
-kubectl apply -f platform/security/kyverno/policies/
-kubectl apply -f platform/security/kyverno/exceptions/
-
-# Verify policies are loaded
-kubectl get clusterpolicies
-```
-
-### Step 12 — Install Gatekeeper (OPA)
-
-```bash
-helm repo add gatekeeper https://open-policy-agent.github.io/gatekeeper/charts
-helm repo update
-helm install gatekeeper gatekeeper/gatekeeper \
-  --namespace gatekeeper-system \
-  --create-namespace
-
-# Apply ConstraintTemplates (CRD definitions)
-kubectl apply -f platform/security/gatekeeper/constraint-templates/
-
-# Wait for CRDs to be established
-kubectl wait --for=condition=established crd/requiresignedimages.constraints.gatekeeper.sh --timeout=60s
-
-# Apply Constraints (enforce rules)
-kubectl apply -f platform/security/gatekeeper/constraints/
-
-# Verify
-kubectl get constrainttemplates
-kubectl get constraints
-```
-
-### Step 13 — Install Prometheus + Grafana
-
-```bash
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo update
-
-# Install kube-prometheus-stack
-helm install kube-prometheus-stack \
-  prometheus-community/kube-prometheus-stack \
-  --namespace monitoring \
-  --create-namespace \
-  -f platform/observability/monitoring/helm/prometheus-values.yaml
-
-# Apply ServiceMonitors (one per microservice)
-kubectl apply -f platform/observability/monitoring/servicemonitors/
-
-# Apply PrometheusRules (alerts)
-kubectl apply -f platform/observability/monitoring/alerts/
-
-# Load Grafana dashboards
-bash platform/observability/monitoring/dashboards/apply-dashboards.sh
-
-# Access Grafana (default: admin/prom-operator)
-kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80
-# Open: http://localhost:3000
-```
+1.  GitHub → **Actions** → **ArgoCD Bootstrap** → **Run workflow**.
+2.  Inputs:
+    - **Action**: `apply-addons`
+    - **Add-ons scope**: `all` (Istio + Prometheus/Grafana)
+3.  **What happens**:
+    - Deploys Istio service mesh (mTLS, Gateway).
+    - Deploys Prometheus, Grafana, and Alertmanager.
+    - Configures dashboards and alert rules.
 
 ---
 
-## PHASE 4 — Deploy the Application via ArgoCD
+## PHASE 4 — Day-to-Day Lifecycle (Cost-Saving Pattern)
 
-### Step 14 — Apply ArgoCD Application Resources
+To keep costs under **$5/week**, destroy compute (AKS/GKE) when not in use.
 
-```bash
-# Create AppProject (namespace + resource restrictions)
-kubectl apply -f platform/gitops/argocd/projects/app-project.yaml
+### Start a Session (Create Compute)
 
-# Deploy dev environment (auto-sync enabled)
-kubectl apply -f platform/gitops/argocd/environments/dev/app-azure.yaml
-# For GCP: kubectl apply -f platform/gitops/argocd/environments/dev/app-gcp.yaml
+1.  GitHub → **Actions** → **Infra**
+2.  Inputs: **action: apply**, **scope: compute-only**.
+3.  Wait ~10 mins for cluster to be ready. ArgoCD will auto-sync applications.
 
-# Deploy qa environment (manual sync)
-kubectl apply -f platform/gitops/argocd/environments/qa/app-azure.yaml
-# For GCP: kubectl apply -f platform/gitops/argocd/environments/qa/app-gcp.yaml
+### End a Session (Destroy Compute)
 
-# → ArgoCD pulls platform/kubernetes/overlays/dev from GitHub and deploys:
-#     api-gateway (port 8000, LoadBalancer)
-#     rental-service (port 8001, ClusterIP)
-#     ledger-service (port 8002, ClusterIP)
-#     notification-service (port 8003, ClusterIP)
-```
-
-### Step 15 — Verify ArgoCD Sync
-
-```bash
-# Install ArgoCD CLI (optional but useful)
-brew install argocd    # macOS
-# or: https://argo-cd.readthedocs.io/en/stable/cli_installation/
-
-# List apps
-argocd app list
-
-# Expected output:
-#   rentalapp-dev   Synced    Healthy   rental-dev
-#   rentalapp-qa    OutOfSync Healthy   rental-qa  (manual sync)
-
-# Check pod status
-kubectl get pods -n rental-dev
-kubectl get pods -n rental-qa
-```
-
-### Step 16 — Setup Multi-Cluster (GKE Spoke)
-
-```bash
-# Switch to GKE context
-kubectl config use-context rental-dev-gke
-
-# Apply RBAC so ArgoCD hub (AKS) can manage GKE spoke
-kubectl apply -f platform/gitops/argocd/cluster/gke-cluster-rbac.yaml
-
-# Switch back to AKS hub
-kubectl config use-context rental-dev-aks
-
-# Register GKE cluster in ArgoCD
-argocd cluster add rental-dev-gke
-
-# Apply ApplicationSet (deploys to both AKS + GKE)
-kubectl apply -f platform/gitops/argocd/applicationset-multicluster.yaml
-```
+1.  GitHub → **Actions** → **Infra**
+2.  Inputs: **action: destroy**, **scope: compute-only**.
+3.  **Kept**: ACR (images), SQL (data), Key Vault (secrets) — no data loss.
+4.  **Destroyed**: AKS/GKE, VNet/VPC, Load Balancer — billing stops.
 
 ---
 
-## PHASE 5 — Enable AI Tools + RAG
+---
 
-### Step 17 — Deploy RAG API
+## PHASE 4 — AI Engine & Advanced Tools
 
-```bash
-# Apply PVC + Deployment + Service
-kubectl apply -f apps/ai-engine/rag/k8s/deployment.yaml
+Deploy the AI-augmented components of the platform.
 
-# Apply hourly indexer CronJob
-kubectl apply -f apps/ai-engine/rag/k8s/cronjob-indexer.yaml
+### Step 9 — Deploy RAG Pipeline
 
-# Seed test data (run once)
-pip install sqlalchemy psycopg2-binary
-python apps/ai-engine/rag/seed_test_data.py
+1.  **Deploy API**:
+    ```bash
+    kubectl apply -f apps/ai-engine/rag/k8s/deployment.yaml
+    ```
+2.  **Deploy Indexer**:
+    ```bash
+    kubectl apply -f apps/ai-engine/rag/k8s/cronjob-indexer.yaml
+    ```
+3.  **Seed Test Data**:
+    ```bash
+    python apps/ai-engine/rag/seed_test_data.py
+    ```
 
-# Test RAG endpoint
-kubectl port-forward svc/rag-api -n rental-dev 8080:8080
-curl http://localhost:8080/health
-curl -X POST http://localhost:8080/query \
-  -H "Content-Type: application/json" \
-  -d '{"question": "Show overdue payments"}'
-```
+### Step 10 — Deploy AI Assistant Tools
 
-### Step 18 — Deploy K8s Assistant
-
-```bash
-# Apply RBAC for the assistant
-kubectl apply -f apps/ai-engine/tools/k8s-assistant/rbac.yaml
-
-# Run locally (reads your current kubeconfig)
-pip install kubernetes rich httpx
-python apps/ai-engine/tools/k8s-assistant/k8s-assistant.py --watch
-
-# Or analyse a specific pod
-python apps/ai-engine/tools/k8s-assistant/k8s-assistant.py --pod <pod-name> --analyse
-
-# Auto-fix (dry run first!)
-python apps/ai-engine/tools/k8s-assistant/k8s-assistant.py --auto-fix --dry-run
-```
-
-### Step 19 — Deploy Anomaly Detector
-
-```bash
-# Apply CronJob (runs every 5 minutes)
-kubectl apply -f apps/ai-engine/tools/anomaly-detector/k8s/cronjob.yaml
-kubectl apply -f apps/ai-engine/tools/anomaly-detector/k8s/rbac.yaml
-
-# Verify CronJob is scheduled
-kubectl get cronjobs -n rental-dev
-
-# Check logs after first run (~5 min)
-kubectl logs -l app=anomaly-detector -n rental-dev --tail=50
-```
+1.  **K8s Assistant**:
+    ```bash
+    kubectl apply -f apps/ai-engine/tools/k8s-assistant/rbac.yaml
+    # Run locally or as a pod:
+    python apps/ai-engine/tools/k8s-assistant/k8s-assistant.py --watch
+    ```
+2.  **Anomaly Detector**:
+    ```bash
+    kubectl apply -f apps/ai-engine/tools/anomaly-detector/k8s/cronjob.yaml
+    ```
 
 ---
 
-## PHASE 6 — Run QA Validation
+## PHASE 5 — Validation & Testing
 
-### Step 20 — Trigger BDD Tests (GitHub Actions)
+Verify the deployment is healthy and secure.
 
-```
-GitHub → Actions → k8s-validate.yml → Run workflow
-  (validates K8s manifests via kubeconform + kustomize build)
+### Step 11 — Run Manifest Validation
 
-Or run BDD tests locally:
-  pip install behave requests
-  cd tests/dev/testing
-  BASE_URL=http://localhost:8000 behave features/ --tags @smoke
-  behave features/ --tags @smoke --format html --outfile reports/smoke-report.html
-```
+- GitHub → **Actions** → **K8s Validate** → **Run workflow**.
+- Validates manifests via `kubeconform` and `kustomize build`.
 
-### Step 21 — Post-Deploy Validation Script
+### Step 12 — Post-Deploy Health Check
 
-```bash
-# Run full validation (pods, health, TLS, memory, Istio)
-bash tests/dev/testing/validate_deployment.sh --cloud azure --env dev --notify discord
-
-# Expected output sections:
-#   [1/5] Pod Status Check       → all pods Running
-#   [2/5] Service Health Check   → all /health return 200
-#   [3/5] TLS Certificate Check  → cert valid, expiry > 30 days
-#   [4/5] Resource Usage Check   → memory < 80%
-#   [5/5] Istio Sidecar Check    → all pods have istio-proxy
-
-# ArgoCD PostSync hook (auto-runs after each sync)
-kubectl apply -f tests/dev/testing/argocd-postsync-hook.yaml
-```
-
-### Step 22 — Verify Notifications Are Working
-
-```bash
-# Discord: trigger a test notification manually
-kubectl exec -n argocd deploy/argocd-notifications-controller -- \
-  argocd-notifications trigger notify on-sync-succeeded \
-    --app rentalapp-dev
-
-# GitHub Actions notify.yml: call from another workflow
-# uses: ./.github/workflows/notify.yml
-# with:
-#   event_type: deployment
-#   status: success
-#   message: "api-gateway v1.2.3 deployed to dev"
-#   environment: dev
-
-# K8s event watcher: deploy and tail logs
-kubectl apply -f platform/observability/alerting/k8s/event-watcher-deployment.yaml
-kubectl logs -l app=k8s-event-watcher -n rental-dev -f
-```
+- Run the automated validation script:
+  ```bash
+  bash tests/shared/testing/validate_deployment.sh --cloud azure --env dev --notify discord
+  ```
 
 ---
 
-## PHASE 7 — Infra Lifecycle (Deploy-Destroy Cost Pattern)
+## PHASE 6 — Lifecycle Management
 
-```
-Session start (manual):
-  → bash ci-cd/scripts/deploy-compute.sh azure dev
-  OR: GitHub Actions → terraform.yml → action: apply
-  → Provisions AKS + VNet + appnode pool
-  → ACR / SQL / Key Vault persist from previous session (no data loss)
-  → Run argocd-bootstrap.yml → ArgoCD + apps up in ~10 min
-  → Discord notification: "Clusters recreated ✅"
+### Start Session (Create Compute)
 
-Session end (manual):
-  → bash ci-cd/scripts/destroy-compute.sh azure dev
-  OR: GitHub Actions → infra-destroy.yml → scope: compute-only
-  → Destroys AKS + VNet only; ACR / SQL / Key Vault left running
-  → Discord notification: "Clusters destroyed 🔴"
+- GitHub → **Actions** → **Infra** → **action: apply**, **scope: compute-only**.
+- ArgoCD automatically reconciles applications once the cluster is up.
 
-Scheduled (cron — optional):
-  → terraform-schedule.yml runs on configured cron schedule
-  → Automates the destroy/recreate cycle
+### End Session (Destroy Compute)
 
-Every PR to main:
-  → ci-build.yml: Terraform fmt → OPA lint → kubeconform → Trivy scan
-  → cost-check.yml: Infracost estimate → OPA guard (weekly budget)
-  → ArgoCD Image Updater: detects new image tag → auto-deploys to dev
-```
+- GitHub → **Actions** → **Infra** → **action: destroy**, **scope: compute-only**.
+- **Important**: This stops compute billing while preserving data in SQL and ACR.
 
 ---
 
-## 🔑 Quick Reference — Key URLs After Deployment
+## 🔑 Quick Reference — Key URLs
 
-| Service | How to Access |
-|---------|--------------|
-| ArgoCD UI | `kubectl port-forward svc/argocd-server -n argocd 8080:443` → https://localhost:8080 |
-| Grafana | `kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80` → http://localhost:3000 |
-| API Gateway | `kubectl get svc api-gateway -n rental-dev` → EXTERNAL-IP:8000 |
-| RAG API | `kubectl port-forward svc/rag-api -n rental-dev 8080:8080` → http://localhost:8080 |
-| Prometheus | `kubectl port-forward svc/kube-prometheus-stack-prometheus -n monitoring 9090:9090` |
-
----
-
-## 🚨 Common Troubleshooting
-
-```bash
-# Pod stuck in Pending (resource pressure)
-kubectl describe pod <pod-name> -n rental-dev | grep -A5 Events
-
-# OOMKilled — increase memory limit in platform/kubernetes/base/<service>/deployment.yaml
-kubectl top pods -n rental-dev
-
-# ArgoCD out of sync — force refresh
-argocd app sync rentalapp-dev --force
-
-# Istio sidecar not injected
-kubectl get pod <pod-name> -n rental-dev -o jsonpath='{.spec.containers[*].name}'
-# Should include "istio-proxy". If missing:
-kubectl delete pod <pod-name> -n rental-dev   # respawn triggers injection
-
-# Kyverno blocking a deployment
-kubectl get policyreport -n rental-dev
-kubectl describe clusterpolicyreport
-
-# Gatekeeper constraint violation
-kubectl get events -n rental-dev | grep constraint
-
-# ArgoCD notifications not firing
-kubectl logs -n argocd deploy/argocd-notifications-controller | tail -50
-
-# Cost check failing OPA
-cat infracost-output.json | jq '.totalMonthlyCost'
-# Edit .infracost/config.yml to exclude dev resources from estimate
-```
+| Service | Access Command |
+|---------|----------------|
+| **ArgoCD UI** | `kubectl port-forward svc/argocd-server -n argocd 8080:443` |
+| **Grafana** | `kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80` |
+| **API Gateway** | `kubectl get svc api-gateway -n rental-dev` |
+| **RAG API** | `kubectl port-forward svc/rag-api -n rental-dev 8080:8080` |
 
 ---
 
@@ -556,54 +301,14 @@ cat infracost-output.json | jq '.totalMonthlyCost'
 
 ```
 AI-RentalApp-Ledger/
-├── .github/workflows/
-│   ├── ci-build.yml            # Terraform fmt, OPA lint, manifest validation, Trivy
-│   ├── terraform.yml           # Infrastructure plan / apply
-│   ├── infra-destroy.yml       # Destroy compute-only or full (approval gate)
-│   ├── terraform-schedule.yml  # Scheduled destroy/recreate
-│   ├── argocd-bootstrap.yml    # ArgoCD install + app deploy
-│   ├── k8s-validate.yml        # kubeconform + kustomize build
-│   └── cost-check.yml          # Infracost + OPA guard
-├── apps/ai-engine/
-│   ├── prompt/                 # Prompt guides (00-11)
-│   ├── rag/                    # RAG pipeline (FastAPI + ChromaDB + LLM)
-│   └── tools/
-│       ├── k8s-assistant/      # AI pod troubleshooter
-│       └── anomaly-detector/   # Statistical anomaly detection
-├── bootstrap/                  # One-time cloud setup scripts
-├── ci-cd/scripts/              # deploy-compute.sh / destroy-compute.sh
-├── tests/dev/testing/          # BDD tests + post-deploy validation
-├── infrastructure/
-│   ├── azure/                  # AKS, ACR, KeyVault, VNet, SQL, budget modules
-│   └── gcp/                    # GKE, Artifact Registry, VPC, Cloud SQL modules
-└── platform/
-    ├── gitops/argocd/
-    │   ├── apps/               # ArgoCD Application + AppProject CRDs
-    │   ├── argocd/             # Helm install values
-    │   └── notifications/      # Discord notification templates
-    ├── kubernetes/
-    │   ├── base/               # Base manifests (4 services)
-    │   └── overlays/dev|qa/    # Kustomize overlays
-    ├── networking/istio/        # mTLS, gateway, virtual services
-    ├── observability/
-    │   ├── alerting/           # Discord + email notifiers, K8s event watcher
-    │   └── monitoring/         # Prometheus, Grafana, AlertManager
-    └── security/
-        ├── gatekeeper/         # OPA constraint templates + constraints
-        ├── kyverno/            # Admission policies + exceptions
-        └── policies/           # Conftest OPA Rego policies (cost, Terraform, PR)
+├── .github/workflows/   # CI/CD Pipelines (Infra, ArgoCD, Validate)
+├── apps/ai-engine/      # RAG Pipeline & AI Assistant Tools
+├── bootstrap/           # One-time Cloud Setup Scripts
+├── infrastructure/      # Terraform Modules (Azure & GCP)
+├── platform/
+│   ├── gitops/          # ArgoCD Charts & App Definitions
+│   ├── kubernetes/      # K8s Manifests (Base & Overlays)
+│   ├── networking/      # Istio Service Mesh
+│   └── observability/   # Prometheus & Grafana
+└── tests/               # BDD Tests & Health Check Scripts
 ```
-
----
-
-## ✅ Next Steps Options
-
-Choose what to build next:
-
-| Option | Description |
-|--------|-------------|
-| **A** | Write the actual FastAPI microservice code (api-gateway, rental-service, ledger-service, notification-service) |
-| **B** | Create a master `Makefile` — single `make deploy` command for all Phase 3 installs |
-| **C** | Create a `docker-compose.yml` for local development without Kubernetes |
-| **D** | Add GitHub Environments + approval gates for QA → Prod promotion |
-| **E** | Write `terraform test` files for infrastructure unit testing |

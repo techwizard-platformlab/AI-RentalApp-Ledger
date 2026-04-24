@@ -219,14 +219,29 @@ def build_secret_maps(env: dict) -> tuple[dict, dict, dict, dict]:
 
     # ── Platform repo (AI-RentalApp-Ledger) ──────────────────────────────────
     platform_secrets = {
-        # OIDC auth
+        # Azure OIDC auth
         "AZURE_CLIENT_ID":       client_id,
         "AZURE_TENANT_ID":       tenant_id,
         "AZURE_SUBSCRIPTION_ID": subscription_id,
-        # Terraform state backend (in techwizard-platformlab-apps)
+
+        # Platform Identifiers
+        "PLATFORM_RG":           platform_rg,
+        "PLATFORM_KV_NAME":      platform_kv,
+        "PLATFORM_MI_NAME":      env.get("PLATFORM_MI_NAME", "automation"),
+
+        # Terraform state backend (Azure)
         "TF_BACKEND_RG":         tf_backend_rg,
         "TF_BACKEND_SA":         tf_backend_sa,
         # TF_BACKEND_CONTAINER computed per-env: rentalapp-<env>-tfstate
+
+        # GCP Config
+        "GCP_PROJECT_ID":                  env.get("GCP_PROJECT_ID", ""),
+        "GCP_REGION":                      env.get("GCP_REGION", "us-central1"),
+        "GCP_WORKLOAD_IDENTITY_PROVIDER":  env.get("GCP_WORKLOAD_IDENTITY_PROVIDER", ""),
+        "GCP_SERVICE_ACCOUNT":             env.get("GCP_SERVICE_ACCOUNT", ""),
+        "TF_BACKEND_BUCKET":               env.get("TF_BACKEND_BUCKET", ""),
+        "TF_BACKEND_PREFIX":               env.get("TF_BACKEND_PREFIX", "rentalledger/dev"),
+
         # Notifications (optional — DISCORD_WEBHOOK_URL fetched from KV at runtime)
         "SMTP_PASSWORD":         smtp_password,
         "MAIL_TO":               mail_to,
@@ -238,6 +253,10 @@ def build_secret_maps(env: dict) -> tuple[dict, dict, dict, dict]:
         "AZURE_CLIENT_ID":       client_id,
         "AZURE_TENANT_ID":       tenant_id,
         "AZURE_SUBSCRIPTION_ID": subscription_id,
+
+        # Platform Identifiers
+        "PLATFORM_KV_NAME":      platform_kv,
+
         # Container registry — ACR name/server are env-specific (random suffix from Terraform)
         # Fetched at runtime from Key Vault secret: acr-login-server
         # Docker Hub
@@ -251,7 +270,7 @@ def build_secret_maps(env: dict) -> tuple[dict, dict, dict, dict]:
     # Required (must be set before first pipeline run)
     platform_required = {
         "AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID",
-        "TF_BACKEND_SA", "TF_BACKEND_RG",
+        "TF_BACKEND_SA", "TF_BACKEND_RG", "PLATFORM_KV_NAME",
     }
     platform_post_tf = set()
 

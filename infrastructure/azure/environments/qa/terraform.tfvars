@@ -41,3 +41,8 @@ app_storage_containers = ["uploads", "backups"]
 monthly_budget_usd = 22
 budget_start_date  = "2026-04-01T00:00:00Z"
 alert_emails       = ["ramprasath2691@outlook.com"]
+
+# ── Security ──────────────────────────────────────────────────────────────────
+# Restrict AKS API access to specific IPs (e.g. your home/office IP).
+# Use ["0.0.0.0/0"] to allow all (not recommended for production).
+api_auth_ips = ["0.0.0.0/0"]

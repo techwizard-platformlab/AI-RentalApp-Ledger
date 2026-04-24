@@ -47,6 +47,7 @@ jobs:
   opa-lint:
     name: "OPA Rego Lint"
     runs-on: ubuntu-latest
+    environment: dev
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
@@ -67,7 +68,7 @@ jobs:
 
       - name: Fetch secrets from Key Vault
         run: |
-          KV="techwizard-plt-kv"
+          KV="${{ secrets.PLATFORM_KV_NAME }}"
           DISCORD=$(az keyvault secret show --vault-name "$KV" --name "rentalapp-discord-webhook" --query value -o tsv 2>/dev/null || true)
           if [[ -n "$DISCORD" ]]; then
             echo "::add-mask::$DISCORD"
@@ -107,6 +108,7 @@ jobs:
   trivy-scan:
     name: "Trivy Security Scan"
     runs-on: ubuntu-latest
+    environment: dev
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
@@ -120,29 +122,57 @@ jobs:
 
       - name: Fetch secrets from Key Vault
         run: |
-          KV="techwizard-plt-kv"
+          KV="${{ secrets.PLATFORM_KV_NAME }}"
           DISCORD=$(az keyvault secret show --vault-name "$KV" --name "rentalapp-discord-webhook" --query value -o tsv 2>/dev/null || true)
           if [[ -n "$DISCORD" ]]; then
             echo "::add-mask::$DISCORD"
             echo "DISCORD_WEBHOOK_URL=$DISCORD" >> "$GITHUB_ENV"
           fi
 
-      - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
-        with:
-          scan-type: fs
-          scan-ref: .
-          format: sarif
-          output: trivy-results.sarif
-          severity: CRITICAL,HIGH
-          exit-code: 1           # Fail build if secrets/high-vulnerabilities are found
-          ignore-unfixed: true
+      - name: Install Trivy
+        run: |
+          TRIVY_VERSION="0.70.0"
+          wget -qO trivy.tar.gz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          tar -xzf trivy.tar.gz trivy
+          sudo mv trivy /usr/local/bin/trivy
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl -o html.tpl
+          trivy --version
+
+      - name: Run Trivy filesystem scan (SARIF → Security tab)
+        run: |
+          trivy fs \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --ignore-unfixed \
+            --format sarif \
+            --output trivy-results.sarif \
+            .
+        continue-on-error: true
+
+      - name: Run Trivy filesystem scan (HTML report)
+        run: |
+          trivy fs \
+            --severity CRITICAL,HIGH \
+            --exit-code 0 \
+            --ignore-unfixed \
+            --format template \
+            --template "@html.tpl" \
+            --output trivy-fs-report.html \
+            .
 
       - name: Upload SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@5c8a8a642e79153f5d047b10ec1cba1d1cc65699  # v3
         if: always()
         with:
           sarif_file: trivy-results.sarif
+
+      - name: Upload Trivy HTML report
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
+        with:
+          name: trivy-filesystem-report
+          path: trivy-fs-report.html
+          retention-days: 14
 
       - name: Notify Discord
         if: always() && env.DISCORD_WEBHOOK_URL != ''

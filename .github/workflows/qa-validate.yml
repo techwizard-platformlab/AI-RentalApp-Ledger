@@ -31,6 +31,7 @@ jobs:
   bdd-tests:
     name: BDD Tests (${{ matrix.cloud }})
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'dev' }}
     strategy:
       fail-fast: false
       matrix:
@@ -60,7 +61,7 @@ jobs:
       - name: Fetch secrets from Key Vault
         if: matrix.cloud == 'azure'
         run: |
-          KV="techwizard-plt-kv"
+          KV="${{ secrets.PLATFORM_KV_NAME }}"
           DISCORD=$(az keyvault secret show --vault-name "$KV" --name "rentalapp-discord-webhook" --query value -o tsv 2>/dev/null || true)
           if [[ -n "$DISCORD" ]]; then
             echo "::add-mask::$DISCORD"

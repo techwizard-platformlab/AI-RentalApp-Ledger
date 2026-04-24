@@ -209,6 +209,7 @@ jobs:
     name: Validation Gate
     runs-on: ubuntu-latest
     needs: [validate, validate-argocd-apps]
+    environment: dev
     if: always()
 
     steps:
@@ -221,7 +222,7 @@ jobs:
 
       - name: Fetch secrets from Key Vault
         run: |
-          KV="techwizard-plt-kv"
+          KV="${{ secrets.PLATFORM_KV_NAME }}"
           DISCORD=$(az keyvault secret show --vault-name "$KV" --name "rentalapp-discord-webhook" --query value -o tsv 2>/dev/null || true)
           if [[ -n "$DISCORD" ]]; then
             echo "::add-mask::$DISCORD"
