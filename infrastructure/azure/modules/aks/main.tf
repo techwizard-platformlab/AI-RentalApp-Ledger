@@ -25,7 +25,7 @@ resource "azurerm_kubernetes_cluster" "this" {
   role_based_access_control_enabled = true
 
   api_server_access_profile {
-    authorized_ip_ranges = var.api_server_authorized_ip_ranges
+    authorized_ip_ranges = var.api_auth_ips
   }
 
   network_profile {

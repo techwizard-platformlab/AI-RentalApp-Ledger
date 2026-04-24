@@ -44,4 +44,4 @@ alert_emails       = ["ramprasath2691@outlook.com"]
 # ── Security ──────────────────────────────────────────────────────────────────
 # Restrict AKS API access to specific IPs (e.g. your home/office IP).
 # Use ["0.0.0.0/0"] to allow all (not recommended for production).
-api_server_authorized_ip_ranges = ["42.104.209.113/32"]
+api_auth_ips = ["42.104.209.113/32"]

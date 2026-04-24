@@ -1,4 +1,4 @@
-variable "api_server_authorized_ip_ranges" {
+variable "api_auth_ips" {
   description = "IP ranges authorized to access the Kubernetes API server."
   type        = list(string)
   default     = ["0.0.0.0/32"] # Default to blocking all; override in tfvars

@@ -114,7 +114,7 @@ module "aks" {
   vm_size             = var.aks_vm_size
   os_disk_size_gb     = var.aks_os_disk_gb
   subnet_id           = module.vnet.subnet_ids["aks"]
-  api_server_authorized_ip_ranges = var.api_server_authorized_ip_ranges
+  api_auth_ips        = var.api_auth_ips
   tags                = local.tags
 }
 
