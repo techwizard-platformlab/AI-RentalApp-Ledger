@@ -22,6 +22,7 @@
 | 09 | RAG Pipeline | `apps/ai-engine/rag/` |
 | 10 | BDD Tests + Post-Deploy Validation | `tests/dev/testing/` |
 | 11 | Discord + Email + ArgoCD Notifications | `platform/observability/alerting/`, `platform/gitops/argocd/notifications/` |
+| 12 | Security Hardening & Workflow Stability | `infrastructure/azure/modules/`, `.github/workflows/terraform.yml` |
 
 ---
 

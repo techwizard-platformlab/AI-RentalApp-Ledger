@@ -231,7 +231,6 @@ kubectl get pods -n rental-qa
 ```bash
 bash tests/shared/testing/validate_deployment.sh --cloud azure --env dev --notify discord
 ```
-
 ### Run BDD tests locally
 
 ```bash
@@ -262,3 +261,22 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for:
 | API Gateway | `kubectl get svc api-gateway -n rental-dev` → EXTERNAL-IP:8000 |
 | RAG API | `kubectl port-forward svc/rag-api -n rental-dev 8080:8080` → http://localhost:8080 |
 | Prometheus | `kubectl port-forward svc/kube-prometheus-stack-prometheus -n monitoring 9090:9090` |
+
+---
+
+## Maintenance & Security Hardening (Recent Updates)
+
+The platform recently underwent a security and stability hardening phase:
+
+- **Terraform Workflow Hardening**:
+  - Automated `TF_VAR_env_resource_group_name` injection to prevent interactive prompt failures in CI/CD.
+  - Fixed artifact upload paths for Trivy security reports (reports now correctly appear in GitHub Action summaries).
+  - Enforced strict `terraform fmt` compliance across all modules.
+- **AKS Security (Zero-Trust)**:
+  - Enabled **API Server Authorized IP Ranges** (defaulting to restricted access).
+  - Enforced **Azure Network Policy** for granular pod-to-pod communication control.
+  - Explicitly enabled **RBAC** for all identity operations.
+- **Data Protection**:
+  - **Key Vault**: Implemented Network ACLs with a default `Deny` action and `AzureServices` bypass.
+  - **Storage Account**: Enforced Network Rules with default `Deny` and restricted access to trusted Azure services.
+
