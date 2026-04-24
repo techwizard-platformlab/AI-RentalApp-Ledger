@@ -25,6 +25,12 @@ resource "azurerm_key_vault" "this" {
   # Keep RBAC mode — matches existing cluster; cannot be toggled after creation.
   rbac_authorization_enabled = true
 
+  network_acls {
+    bypass         = "AzureServices"
+    default_action = "Deny"
+    ip_rules       = []
+  }
+
   tags = var.tags
 
   lifecycle {

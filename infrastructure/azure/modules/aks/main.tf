@@ -22,8 +22,15 @@ resource "azurerm_kubernetes_cluster" "this" {
     type = "SystemAssigned"
   }
 
+  role_based_access_control_enabled = true
+
+  api_server_access_profile {
+    authorized_ip_ranges = var.api_server_authorized_ip_ranges
+  }
+
   network_profile {
     network_plugin    = "azure"
+    network_policy    = "azure"
     load_balancer_sku = "standard"
     outbound_type     = "loadBalancer"
     # Must not overlap with VNet (10.0.0.0/16) or subnets (10.0.1-3.0/24)
